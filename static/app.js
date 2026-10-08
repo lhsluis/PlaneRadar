@@ -41,15 +41,21 @@ const TRANSLATIONS = {
 };
 let locale = localStorage.getItem("plane-radar-locale") || "pt-BR";
 const SETTINGS_STORAGE_KEY = "plane-radar-settings";
+const DEFAULT_SETTINGS = {
+  lat: window.PLANE_RADAR_DEFAULTS.latitude,
+  lon: window.PLANE_RADAR_DEFAULTS.longitude,
+  dist: window.PLANE_RADAR_DEFAULTS.distance,
+  polling: window.PLANE_RADAR_DEFAULTS.polling,
+};
 function readSessionSettings() {
   try {
     const saved = JSON.parse(sessionStorage.getItem(SETTINGS_STORAGE_KEY) || "null");
     if (!saved || !Number.isFinite(Number(saved.lat)) || !Number.isFinite(Number(saved.lon)) || !Number.isFinite(Number(saved.dist))) {
-      return {...window.PLANE_RADAR_DEFAULTS};
+      return {...DEFAULT_SETTINGS};
     }
-    return {...window.PLANE_RADAR_DEFAULTS, lat: saved.lat, lon: saved.lon, dist: saved.dist};
+    return {...DEFAULT_SETTINGS, lat: saved.lat, lon: saved.lon, dist: saved.dist};
   } catch (error) {
-    return {...window.PLANE_RADAR_DEFAULTS};
+    return {...DEFAULT_SETTINGS};
   }
 }
 function saveSessionSettings(settingsToSave) {
