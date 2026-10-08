@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PlaneRadar · Mobile</title>
+    <link rel="icon" href="{{ url_for('static', filename='logo.ico') }}" type="image/x-icon">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20261008-11') }}">
+  </head>
+  <body class="mobile-page">
+    <main class="app-shell">
+      <header class="topbar">
+        <div><p class="eyebrow">LIVE ADS-B MONITOR</p><div class="brand-title"><img class="brand-logo" src="{{ url_for('static', filename='logo.png') }}" alt=""><h1 id="mobile-brand-title" data-i18n-html="brandTitle">Lá<span> em Cima</span>!</h1></div><p id="mobile-location-label" class="location-label"><span class="location-city"></span><span class="location-separator"> - </span><span class="location-region"></span><span class="location-country"></span></p></div>
+        <div class="topbar-actions">
+          <label class="language-picker" for="mobile-language-select"><span data-i18n="language">Idioma</span>
+            <select id="mobile-language-select"><option value="pt-BR">PT-BR</option><option value="en-US">EN-US</option></select>
+          </label>
+          <a class="mobile-link" href="{{ url_for('index') }}" data-i18n="radarVersion">Versão radar</a>
+        </div>
+      </header>
+
+      <section class="mobile-settings panel">
+        <form id="mobile-settings-form">
+          <label><span data-i18n="latitude">Latitude</span><input name="lat" type="number" step="any" value="{{ defaults.latitude }}" required></label>
+          <label><span data-i18n="longitude">Longitude</span><input name="lon" type="number" step="any" value="{{ defaults.longitude }}" required></label>
+          <label><span data-i18n="radius">Raio</span> (NM)<input name="dist" type="number" min="0.1" max="250" step="0.1" value="{{ defaults.distance }}" required></label>
+          <button type="submit" data-i18n="updateArea">Atualizar área</button>
+        </form>
+      </section>
+      <section class="mobile-controls panel">
+        <div><p class="eyebrow" data-i18n="liveTraffic">TRÁFEGO AO VIVO</p><span class="live-label" data-i18n="live">Ao vivo</span></div>
+        <div class="connection-status" id="mobile-connection"><span class="status-dot"></span><span id="mobile-status">Conectando</span></div>
+      </section>
+      <div id="mobile-message" class="message" hidden></div>
+      <section class="mobile-table panel">
+        <div class="mobile-table-heading">
+          <div><p class="eyebrow" data-i18n="liveTraffic">TRÁFEGO AO VIVO</p><h2 data-i18n="detectedFlights">Voos detectados</h2></div>
+          <div class="mobile-table-meta"><span><strong id="mobile-count">—</strong> <span data-i18n="aircraftDetected">aeronaves detectadas</span></span><span id="mobile-refresh">—</span></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th data-i18n="flight">Voo</th><th data-i18n="airline">Companhia aérea</th><th data-i18n="route">Rota</th>
+              <th data-i18n="aircraft">Aeronave</th><th data-i18n="altitude">Altitude</th><th data-i18n="speed">Velocidade</th>
+              <th data-i18n="heading">Proa</th><th data-i18n="distance">Distância</th>
+            </tr></thead>
+            <tbody id="mobile-flight-list"><tr><td colspan="8" class="empty-state" data-i18n="searchingAirspace">Pesquisando o espaço aéreo…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+      <footer><span data-i18n="source">Fonte</span>: <a href="https://adsb.fi/" target="_blank" rel="noreferrer">adsb.fi</a> | <a href="https://www.adsbdb.com/" target="_blank" rel="noreferrer">adsbdb.com</a></footer>
+    </main>
+    <script>window.PLANE_RADAR_DEFAULTS = {{ defaults | tojson }};</script>
+    <script src="{{ url_for('static', filename='mobile.js', v='20261008-14') }}"></script>
+  </body>
+</html>

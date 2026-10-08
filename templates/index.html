@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Live ADS-B flight tracker for your location">
+    <title>PlaneRadar</title>
+    <link rel="icon" href="{{ url_for('static', filename='logo.ico') }}" type="image/x-icon">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20261008-11') }}">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">LIVE ADS-B MONITOR</p>
+          <div class="brand-title">
+            <img class="brand-logo" src="{{ url_for('static', filename='logo.png') }}" alt="">
+            <h1 id="brand-title" data-i18n-html="brandTitle">Lá<span> em Cima</span>!</h1>
+          </div>
+          <p id="location-label" class="location-label"><span class="location-city"></span><span class="location-separator"> - </span><span class="location-region"></span><span class="location-country"></span></p>
+        </div>
+        <div class="topbar-actions">
+          <label class="language-picker" for="language-select">
+            <span data-i18n="language">Idioma</span>
+            <select id="language-select" aria-label="Selecionar idioma">
+              <option value="pt-BR">Português (Brasil)</option>
+              <option value="en-US">English (US)</option>
+            </select>
+          </label>
+          <a class="mobile-link" href="{{ url_for('mobile') }}" data-i18n="mobileVersion">Versão mobile</a>
+          <div class="connection-status" id="connection-status">
+            <span class="status-dot"></span>
+            <span id="status-text" data-i18n="connecting">Conectando</span>
+          </div>
+        </div>
+      </header>
+      <div id="mobile-suggestion" class="mobile-suggestion" hidden>
+        <span data-i18n="mobileSuggestion">Você está em um dispositivo móvel. Quer usar a versão otimizada?</span>
+        <a href="{{ url_for('mobile') }}" data-i18n="openMobile">Abrir versão mobile</a>
+        <button type="button" id="dismiss-mobile" aria-label="Fechar">×</button>
+      </div>
+
+      <section class="controls panel">
+        <div class="control-heading">
+          <p class="eyebrow" data-i18n="trackingArea">ÁREA DE RASTREAMENTO</p>
+          <h2 data-i18n="whatIsOverhead">O que está sobrevoando?</h2>
+        </div>
+        <form id="settings-form">
+          <label><span data-i18n="latitude">Latitude</span>
+            <input type="number" name="lat" step="any" value="{{ defaults.latitude }}" required>
+          </label>
+          <label><span data-i18n="longitude">Longitude</span>
+            <input type="number" name="lon" step="any" value="{{ defaults.longitude }}" required>
+          </label>
+          <label><span data-i18n="radius">Raio</span> <span>(NM)</span>
+            <input type="number" name="dist" min="0.1" max="250" step="0.1" value="{{ defaults.distance }}" required>
+          </label>
+          <button type="submit" data-i18n="updateArea">Atualizar área</button>
+        </form>
+      </section>
+
+      <section class="dashboard">
+        <div class="radar-panel panel">
+          <div class="panel-title">
+            <div>
+              <p class="eyebrow" data-i18n="airspaceRadar">RADAR DO ESPAÇO AÉREO</p>
+              <h2 data-i18n="aircraftNearby">Aeronaves próximas</h2>
+            </div>
+            <span class="last-update" id="last-update">Waiting for data</span>
+          </div>
+          <div class="radar" id="radar" aria-label="Radar view of nearby aircraft">
+            <div class="radar-ring ring-outer"></div>
+            <div class="radar-ring ring-middle"></div>
+            <div class="radar-ring ring-inner"></div>
+            <div class="radar-cross cross-horizontal"></div>
+            <div class="radar-cross cross-vertical"></div>
+            <div class="radar-sweep"></div>
+            <div class="radar-center"></div>
+            <div class="radar-label label-north">N</div>
+            <div class="radar-label label-east">E</div>
+            <div class="radar-label label-south">S</div>
+            <div class="radar-label label-west">W</div>
+            <div id="radar-blips"></div>
+            <div id="tracked-aircraft" class="tracked-aircraft" hidden>
+              <div class="tracked-label">
+                <span class="tracked-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" role="img"><path d="M21.7 11.2 14 8.4V3.8c0-.8-.7-1.5-1.5-1.5S11 3 11 3.8v4.6l-8.7 2.8c-.5.2-.8.7-.8 1.2v.6c0 .4.4.7.8.6l8.7-1.3v4.6l-2.1 1.3c-.3.2-.5.5-.5.9v.4c0 .3.3.5.6.4l2.5-.6 2.5.6c.3.1.6-.1.6-.4v-.4c0-.4-.2-.7-.5-.9L13 16.9v-4.6l8.7 1.3c.4.1.8-.2.8-.6v-.6c0-.5-.3-1-.8-1.2Z"/></svg>
+                </span>
+                <span id="tracked-callsign">—</span>
+              </div>
+            </div>
+          </div>
+          <p class="radar-caption"><span data-i18n="tracking">Rastreando</span> <strong id="tracked-caption">—</strong> · <span data-i18n="groundspeed">velocidade no solo</span> <strong id="speed-caption">—</strong> kt</p>
+          <div id="flight-info" class="flight-info" hidden>
+            <strong id="flight-airline">—</strong>
+            <span><span id="flight-origin">—</span> <b>→</b> <span id="flight-destination">—</span></span>
+          </div>
+        </div>
+
+        <aside class="summary">
+          <div class="metric panel">
+            <span class="metric-label" data-i18n="inAirspace">NO ESPAÇO AÉREO</span>
+            <strong id="aircraft-count">—</strong>
+            <span class="metric-note" data-i18n="aircraftDetected">aeronaves detectadas</span>
+          </div>
+          <div class="metric panel">
+            <span class="metric-label" data-i18n="closestAircraft">AERONAVE MAIS PRÓXIMA</span>
+            <strong id="closest-distance">—</strong>
+            <span class="metric-note" data-i18n="nauticalMilesAway">milhas náuticas de distância</span>
+          </div>
+          <div class="metric panel">
+            <span class="metric-label" data-i18n="nextRefresh">PRÓXIMA ATUALIZAÇÃO</span>
+            <strong id="countdown">—</strong>
+            <span class="metric-note" data-i18n="automaticPolling">consulta automática</span>
+          </div>
+        </aside>
+      </section>
+
+      <section class="flights panel">
+        <div class="panel-title">
+          <div>
+            <p class="eyebrow" data-i18n="liveTraffic">TRÁFEGO AO VIVO</p>
+            <h2 data-i18n="detectedFlights">Voos detectados</h2>
+          </div>
+          <span class="data-source"><span data-i18n="source">Fonte</span>: <a href="https://adsb.fi/" target="_blank" rel="noreferrer">adsb.fi</a> | <a href="https://www.adsbdb.com/" target="_blank" rel="noreferrer">adsbdb.com</a></span>
+        </div>
+        <div id="message" class="message" role="status" hidden></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th data-i18n="flight">Voo</th>
+                <th data-i18n="airline">Companhia aérea</th>
+                <th data-i18n="route">Rota</th>
+                <th data-i18n="aircraft">Aeronave</th>
+                <th data-i18n="altitude">Altitude</th>
+                <th data-i18n="speed">Velocidade</th>
+                <th data-i18n="heading">Proa</th>
+                <th data-i18n="distance">Distância</th>
+              </tr>
+            </thead>
+            <tbody id="flight-list">
+              <tr><td colspan="8" class="empty-state" data-i18n="searchingAirspace">Pesquisando o espaço aéreo…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <footer data-i18n="footer">Dados fornecidos por transponders de aeronaves ADS-B. Altitudes em pés e velocidades em nós.</footer>
+    </main>
+    <script>
+      window.PLANE_RADAR_DEFAULTS = {{ defaults | tojson }};
+    </script>
+    <script src="{{ url_for('static', filename='app.js', v='20261008-14') }}"></script>
+  </body>
+</html>

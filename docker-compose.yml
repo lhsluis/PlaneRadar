@@ -1,0 +1,13 @@
+services:
+  planeradar:
+    build: .
+    container_name: planeradar
+    ports:
+      - "5000:5000"
+    environment:
+      PLANE_RADAR_LAT: "-21.805684"
+      PLANE_RADAR_LON: "-48.139653"
+      PLANE_RADAR_DISTANCE: "25"
+      PLANE_RADAR_POLLING: "5"
+      FLASK_PORT: "5000"
+    restart: unless-stopped
