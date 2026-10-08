@@ -46,7 +46,7 @@ python app.py [latitude] [longitude] [distancia] [polling]
 Exemplo:
 
 ```powershell
-python app.py 41.179739 -8.671769 2 10
+python app.py -21.805684 -48.139653 25 5
 ```
 
 O polling deve ser um número inteiro de pelo menos 3 segundos. A distância aceita pela API é de até 250 milhas náuticas.
