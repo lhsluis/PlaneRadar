@@ -1,7 +1,7 @@
 const MOBILE_POLL_INTERVAL = Number(window.PLANE_RADAR_DEFAULTS.polling) || 10;
 const MOBILE_TRANSLATIONS = {
-  "pt-BR": {brandTitle:"Lá<span> em Cima</span>!",language:"Idioma",live:"Ao vivo",offline:"Offline",radarVersion:"Versão radar",liveTraffic:"TRÁFEGO AO VIVO",detectedFlights:"Voos detectados",latitude:"Latitude",longitude:"Longitude",radius:"Raio",updateArea:"Atualizar área",aircraftDetected:"aeronaves detectadas",flight:"Voo",airline:"Companhia aérea",route:"Rota",aircraft:"Aeronave",altitude:"Altitude",speed:"Velocidade",heading:"Proa",distance:"Distância",nextRefresh:"PRÓXIMA ATUALIZAÇÃO",militaryAircraft:"Aeronave militar",searchingAirspace:"Pesquisando o espaço aéreo…",noAircraft:"Nenhuma aeronave detectada nesta área.",unknown:"Desconhecido",unavailable:"indisponível",onGround:"No solo",originUnknown:"Origem desconhecida",destinationUnknown:"Destino desconhecido",updated:"Atualizado",now:"agora"},
-  "en-US": {brandTitle:"Up<span>There</span>!",language:"Language",live:"Live",offline:"Offline",radarVersion:"Radar version",liveTraffic:"LIVE TRAFFIC",detectedFlights:"Detected flights",latitude:"Latitude",longitude:"Longitude",radius:"Radius",updateArea:"Update area",aircraftDetected:"aircraft detected",flight:"Flight",airline:"Airline",route:"Route",aircraft:"Aircraft",altitude:"Altitude",speed:"Speed",heading:"Heading",distance:"Distance",nextRefresh:"NEXT REFRESH",militaryAircraft:"Military aircraft",searchingAirspace:"Searching the airspace…",noAircraft:"No aircraft detected in this area.",unknown:"Unknown",unavailable:"unavailable",onGround:"On ground",originUnknown:"Unknown origin",destinationUnknown:"Unknown destination",updated:"Updated",now:"now"}
+  "pt-BR": {brandTitle:"Lá<span> em Cima</span>!",language:"Idioma",live:"Ao vivo",offline:"Offline",radarVersion:"Versão radar",liveTraffic:"TRÁFEGO AO VIVO",detectedFlights:"Voos detectados",latitude:"Latitude",longitude:"Longitude",radius:"Raio",updateArea:"Atualizar área",aircraftDetected:"aeronaves detectadas",flight:"Voo",airline:"Companhia aérea",route:"Rota",aircraft:"Aeronave",altitude:"Altitude",speed:"Velocidade",heading:"Proa",distance:"Distância",nextRefresh:"PRÓXIMA ATUALIZAÇÃO",activeUsers:"<strong>{count}</strong> sessões olhando lá <span>pra cima</span>!",militaryAircraft:"Aeronave militar",searchingAirspace:"Pesquisando o espaço aéreo…",noAircraft:"Nenhuma aeronave detectada nesta área.",unknown:"Desconhecido",unavailable:"indisponível",onGround:"No solo",originUnknown:"Origem desconhecida",destinationUnknown:"Destino desconhecido",updated:"Atualizado",now:"agora"},
+  "en-US": {brandTitle:"Up<span>There</span>!",language:"Language",live:"Live",offline:"Offline",radarVersion:"Radar version",liveTraffic:"LIVE TRAFFIC",detectedFlights:"Detected flights",latitude:"Latitude",longitude:"Longitude",radius:"Radius",updateArea:"Update area",aircraftDetected:"aircraft detected",flight:"Flight",airline:"Airline",route:"Route",aircraft:"Aircraft",altitude:"Altitude",speed:"Speed",heading:"Heading",distance:"Distance",nextRefresh:"NEXT REFRESH",activeUsers:"<strong>{count}</strong> sessions looking up <span>there</span>!",militaryAircraft:"Military aircraft",searchingAirspace:"Searching the airspace…",noAircraft:"No aircraft detected in this area.",unknown:"Unknown",unavailable:"unavailable",onGround:"On ground",originUnknown:"Unknown origin",destinationUnknown:"Unknown destination",updated:"Updated",now:"now"}
 };
 let mobileLocale = localStorage.getItem("plane-radar-locale") || "pt-BR";
 const SETTINGS_STORAGE_KEY = "plane-radar-settings";
@@ -40,6 +40,25 @@ let mobileLocationRequestKey = null;
 const $m = (selector) => document.querySelector(selector);
 const tm = (key) => MOBILE_TRANSLATIONS[mobileLocale][key] || key;
 const number = (value, digits = 0) => Number.isFinite(Number(value)) ? Number(value).toLocaleString(mobileLocale, {maximumFractionDigits: digits}) : "—";
+function renderActiveUsers(count = "—") {
+  const element = $m("#active-users-label");
+  if (element) element.innerHTML = tm("activeUsers").replace("{count}", count);
+}
+function getPresenceClientId() {
+  const key = "plane-radar-presence-id";
+  let clientId = localStorage.getItem(key);
+  if (!clientId) {
+    clientId = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(key, clientId);
+  }
+  return clientId;
+}
+async function updatePresence() {
+  try {
+    const response = await fetch("/api/presence", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({client_id:getPresenceClientId()})});
+    if (response.ok) renderActiveUsers(number((await response.json()).active_users));
+  } catch (error) { console.warn("Unable to update active user count:", error); }
+}
 
 function renderMobileLocation() {
   const label = $m("#mobile-location-label");
@@ -119,7 +138,7 @@ setInterval(() => {
 document.querySelectorAll("[data-i18n]");
 $m("#mobile-language-select").addEventListener("change", (event) => { mobileLocale = event.target.value; localStorage.setItem("plane-radar-locale", mobileLocale); applyMobileLocale(); loadMobileLocation(); });
 $m("#mobile-settings-form").addEventListener("submit", (event) => { event.preventDefault(); mobileSettings = Object.fromEntries(new FormData(event.currentTarget)); saveSessionSettings(mobileSettings); loadMobileLocation(); loadMobileAircraft(); });
-applyMobileLocale();
+applyMobileLocale(); updatePresence(); setInterval(updatePresence, 15000);
 Object.entries({lat: mobileSettings.lat, lon: mobileSettings.lon, dist: mobileSettings.dist}).forEach(([name, value]) => {
   $m(`#mobile-settings-form [name="${name}"]`).value = value;
 });

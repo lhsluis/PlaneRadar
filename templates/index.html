@@ -145,11 +145,11 @@
           </table>
         </div>
       </section>
-      <footer data-i18n="footer">Dados fornecidos por transponders de aeronaves ADS-B. Altitudes em pés e velocidades em nós.</footer>
+      <footer><span data-i18n="footer">Dados fornecidos por transponders de aeronaves ADS-B. Altitudes em pés e velocidades em nós.</span> <span id="active-users-label" class="active-users" data-i18n-html="activeUsers" aria-live="polite"></span></footer>
     </main>
     <script>
       window.PLANE_RADAR_DEFAULTS = {{ defaults | tojson }};
     </script>
-    <script src="{{ url_for('static', filename='app.js', v='20261008-17') }}"></script>
+    <script src="{{ url_for('static', filename='app.js', v='20261008-19') }}"></script>
   </body>
 </html>

@@ -17,7 +17,7 @@ const TRANSLATIONS = {
     unknown: "Desconhecido", onGround: "No solo", unavailable: "indisponível",
     routeUnavailable: "Rota não disponível", originUnknown: "Origem desconhecida", destinationUnknown: "Destino desconhecido", militaryAircraft: "Aeronave militar",
     updated: "Atualizado", now: "agora", footer: "Dados fornecidos por transponders de aeronaves ADS-B. Altitudes em pés e velocidades em nós.",
-    radarAriaLabel: "Radar de aeronaves próximas",
+    radarAriaLabel: "Radar de aeronaves próximas", activeUsers: "<strong>{count}</strong> sessões olhando lá <span>pra cima</span>!",
   },
   "en-US": {
     brandTitle: "Up<span>There</span>!", language: "Language", connecting: "Connecting", live: "Live", offline: "Offline", mobileVersion: "Mobile version", mobileSuggestion: "You are on a mobile device. Would you like to use the optimized version?", openMobile: "Open mobile version",
@@ -36,7 +36,7 @@ const TRANSLATIONS = {
     unknown: "Unknown", onGround: "On ground", unavailable: "unavailable",
     routeUnavailable: "Route unavailable", originUnknown: "Unknown origin", destinationUnknown: "Unknown destination", militaryAircraft: "Military aircraft",
     updated: "Updated", now: "now", footer: "Data provided by ADS-B aircraft transponders. Altitudes are in feet, speeds are in knots.",
-    radarAriaLabel: "Radar view of nearby aircraft",
+    radarAriaLabel: "Radar view of nearby aircraft", activeUsers: "<strong>{count}</strong> sessions looking up <span>there</span>!",
   },
 };
 let locale = localStorage.getItem("plane-radar-locale") || "pt-BR";
@@ -84,6 +84,35 @@ const flightInfoRequests = new Map();
 
 const $ = (selector) => document.querySelector(selector);
 const t = (key) => TRANSLATIONS[locale][key] || TRANSLATIONS["pt-BR"][key] || key;
+function renderActiveUsers(count = "—") {
+  const element = $("#active-users-label");
+  if (element) element.innerHTML = t("activeUsers").replace("{count}", count);
+}
+
+function getPresenceClientId() {
+  const key = "plane-radar-presence-id";
+  let clientId = localStorage.getItem(key);
+  if (!clientId) {
+    clientId = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(key, clientId);
+  }
+  return clientId;
+}
+
+async function updatePresence() {
+  try {
+    const response = await fetch("/api/presence", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({client_id: getPresenceClientId()}),
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    renderActiveUsers(formatNumber(data.active_users));
+  } catch (error) {
+    console.warn("Unable to update active user count:", error);
+  }
+}
 
 function applyLocale() {
   document.documentElement.lang = locale;
@@ -500,6 +529,8 @@ if (mobileSuggestion && isMobileDevice() && !localStorage.getItem("plane-radar-m
 }
 
 applyLocale();
+updatePresence();
+setInterval(updatePresence, 15000);
 Object.entries({lat: settings.lat, lon: settings.lon, dist: settings.dist}).forEach(([name, value]) => {
   $(`#settings-form [name="${name}"]`).value = value;
 });

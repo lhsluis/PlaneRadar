@@ -82,6 +82,9 @@ button:hover { filter: brightness(1.1); }
 .flights { padding: 23px; }.data-source a { color: var(--accent); }.table-wrap { overflow-x: auto; } table { width: 100%; border-collapse: collapse; font-size: 13px; } th { color: var(--muted); font: 10px "DM Mono"; letter-spacing: .08em; text-align: left; text-transform: uppercase; } th, td { padding: 14px 12px; border-bottom: 1px solid var(--line); } th:first-child, td:first-child { padding-left: 0; } th:last-child, td:last-child { padding-right: 0; text-align: right; }
 td { color: #c5d7dc; }.flight-code { color: var(--accent); font: 600 14px "DM Mono"; }.subtext { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }.empty-state, .message { color: var(--muted); text-align: center; padding: 27px; }.message { margin-bottom: 10px; padding: 10px; border: 1px solid rgba(255,190,114,.3); border-radius: 6px; color: var(--warning); background: rgba(255,190,114,.06); }.message[hidden] { display: none; } footer { padding: 20px 0; color: var(--muted); font: 10px "DM Mono"; text-align: center; }
 .military-badge { margin-left: 6px; color: var(--warning); font: 600 12px "DM Mono", monospace; white-space: nowrap; }
+.active-users { margin-left: 10px; opacity: .7; }
+.active-users strong { color: var(--text); font-weight: 500; }
+.active-users > span { color: var(--accent); }
 @media (max-width: 800px) { .app-shell { padding: 23px 15px; }.controls { align-items: stretch; flex-direction: column; }.controls form { justify-content: flex-start; flex-wrap: wrap; }.dashboard { grid-template-columns: 1fr; }.summary { grid-template-columns: repeat(3, 1fr); }.metric { padding: 15px; }.metric strong { font-size: 28px; } }
 @media (max-width: 500px) { .summary { grid-template-columns: 1fr; }.panel-title { align-items: flex-start; flex-direction: column; gap: 8px; } input { width: 125px; } }
 .mobile-page .app-shell { max-width: 1500px; }

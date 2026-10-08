@@ -99,6 +99,7 @@ As duas interfaces oferecem:
 - Alteração de latitude, longitude e distância.
 - Polling configurável no início do servidor.
 - Dados de companhia aérea, origem e destino por callsign.
+- Contagem anônima de sessões ativas no footer, atualizada por heartbeat e exibida como “sessões olhando lá pra cima!” ou “sessions looking up there!”.
 
 Na página desktop, clicar em uma aeronave fixa o rastreamento nela. Sem seleção manual, a aeronave mais próxima do centro é rastreada.
 
@@ -108,17 +109,20 @@ Na página desktop, clicar em uma aeronave fixa o rastreamento nela. Sem seleç�
 GET /api/aircraft?lat={lat}&lon={lon}&dist={dist}
 GET /api/flight-info?callsign={callsign}
 GET /api/location?lat={lat}&lon={lon}&localityLanguage={pt|en}
+POST /api/presence
 ```
 
-- `/api/aircraft` consulta o endpoint v3 do adsb.fi.
+- `/api/aircraft` consulta o endpoint v3 do adsb.fi. O backend reserva os slots das consultas com intervalo mínimo de 2 segundos, evitando colisões quando várias sessões estão abertas ao mesmo tempo.
 - `/api/flight-info` consulta o ADSBdb pelo callsign retornado pela API ADS-B e mantém cache no servidor por 15 minutos.
 - `/api/location` consulta o reverse geocoding da API BDC. A consulta ocorre no carregamento e quando latitude, longitude ou idioma mudam, não a cada refresh de aeronaves.
+- `/api/presence` registra um identificador anônimo do navegador e retorna a quantidade de sessões ativas.
 
 O polling ocorre no navegador, portanto o servidor não consulta as APIs quando não há páginas abertas.
+O contador de usuários considera ativos os navegadores que enviaram heartbeat nos últimos 45 segundos. O identificador é anônimo e não armazena endereço IP. Como o contador fica em memória, em deployments com múltiplos workers ou réplicas ele deve ser movido para um armazenamento compartilhado.
 
 ## Uso das APIs externas
 
-O endpoint público do adsb.fi possui limite de uma requisição por segundo e é destinado a uso pessoal e não comercial. O projeto atualiza aeronaves no mínimo a cada 3 segundos, conforme o parâmetro informado, e mantém o enriquecimento de callsigns em cache. Consulte os [termos do adsb.fi](https://github.com/adsbfi/opendata/blob/main/README.md), os [termos do ADSBdb](https://www.adsbdb.com/) e as condições dos demais fornecedores antes de publicar ou distribuir a aplicação.
+O endpoint público do adsb.fi possui limite de uma requisição por segundo e é destinado a uso pessoal e não comercial. Além do intervalo configurado no navegador, o servidor aplica um intervalo mínimo global de 2 segundos entre o início das consultas ao adsb.fi. A configuração de produção usa um worker Gunicorn para que esse limitador seja compartilhado por todas as threads; ao escalar para múltiplos workers ou réplicas, use um limitador compartilhado externo, como Redis. Consulte os [termos do adsb.fi](https://github.com/adsbfi/opendata/blob/main/README.md), os [termos do ADSBdb](https://www.adsbdb.com/) e as condições dos demais fornecedores antes de publicar ou distribuir a aplicação.
 
 ## Estrutura
 

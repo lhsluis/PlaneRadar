@@ -2,6 +2,7 @@ import argparse
 import os
 import re
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -18,8 +19,41 @@ DEFAULT_LONGITUDE = os.getenv("PLANE_RADAR_LON", "-48.139653")
 DEFAULT_DISTANCE = os.getenv("PLANE_RADAR_DISTANCE", "25")
 DEFAULT_POLLING = int(os.getenv("PLANE_RADAR_POLLING", "10"))
 REQUEST_TIMEOUT = 12
+ADSB_MIN_REQUEST_INTERVAL = 2
+PRESENCE_TIMEOUT = 45
 FLIGHT_INFO_CACHE_TTL = 900
 flight_info_cache = {}
+adsb_request_lock = threading.Lock()
+presence_lock = threading.Lock()
+active_presence = {}
+last_adsb_request_at = 0.0
+
+
+def request_adsb(url):
+    """Reserve an ADS-B request slot so concurrent sessions stay rate-limited."""
+    global last_adsb_request_at
+    with adsb_request_lock:
+        wait = ADSB_MIN_REQUEST_INTERVAL - (time.monotonic() - last_adsb_request_at)
+        if wait > 0:
+            time.sleep(wait)
+        last_adsb_request_at = time.monotonic()
+
+    return requests.get(
+        url,
+        headers={"User-Agent": "PlaneRadar/1.0"},
+        timeout=REQUEST_TIMEOUT,
+    )
+
+
+def register_presence(client_id):
+    now = time.monotonic()
+    with presence_lock:
+        active_presence[client_id] = now
+        cutoff = now - PRESENCE_TIMEOUT
+        for stored_id, last_seen in list(active_presence.items()):
+            if last_seen < cutoff:
+                del active_presence[stored_id]
+        return len(active_presence)
 
 
 def startup_settings():
@@ -171,13 +205,8 @@ def aircraft():
         lon=f"{longitude:.6f}",
         distance=f"{distance:g}",
     )
-
     try:
-        response = requests.get(
-            url,
-            headers={"User-Agent": "PlaneRadar/1.0"},
-            timeout=REQUEST_TIMEOUT,
-        )
+        response = request_adsb(url)
         response.raise_for_status()
         payload = response.json()
     except requests.HTTPError as error:
@@ -209,6 +238,15 @@ def aircraft():
             },
         }
     )
+
+
+@app.post("/api/presence")
+def presence():
+    payload = request.get_json(silent=True) or {}
+    client_id = payload.get("client_id")
+    if not isinstance(client_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,100}", client_id):
+        return jsonify({"error": "A valid client identifier is required."}), 400
+    return jsonify({"active_users": register_presence(client_id)})
 
 
 @app.get("/api/location")
