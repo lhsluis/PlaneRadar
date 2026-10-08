@@ -31,7 +31,7 @@ Sem argumentos, o servidor usa:
 | Latitude | `-21.805684` |
 | Longitude | `-48.139653` |
 | Distância | `25` NM |
-| Polling | `5` segundos |
+| Polling | `10` segundos |
 
 ```powershell
 python app.py
@@ -46,7 +46,7 @@ python app.py [latitude] [longitude] [distancia] [polling]
 Exemplo:
 
 ```powershell
-python app.py -21.805684 -48.139653 25 5
+python app.py -21.805684 -48.139653 25 10
 ```
 
 O polling deve ser um número inteiro de pelo menos 3 segundos. A distância aceita pela API é de até 250 milhas náuticas.

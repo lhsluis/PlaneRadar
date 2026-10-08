@@ -1,4 +1,4 @@
-const POLL_INTERVAL = Number(window.PLANE_RADAR_DEFAULTS.polling) || 5;
+const POLL_INTERVAL = Number(window.PLANE_RADAR_DEFAULTS.polling) || 10;
 const TRANSLATIONS = {
   "pt-BR": {
     brandTitle: "Lá<span> em Cima</span>!", language: "Idioma", connecting: "Conectando", live: "Ao vivo", offline: "Offline", mobileVersion: "Versão mobile", mobileSuggestion: "Você está em um dispositivo móvel. Quer usar a versão otimizada?", openMobile: "Abrir versão mobile",
@@ -40,7 +40,28 @@ const TRANSLATIONS = {
   },
 };
 let locale = localStorage.getItem("plane-radar-locale") || "pt-BR";
-let settings = {...window.PLANE_RADAR_DEFAULTS};
+const SETTINGS_STORAGE_KEY = "plane-radar-settings";
+function readSessionSettings() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SETTINGS_STORAGE_KEY) || "null");
+    if (!saved || !Number.isFinite(Number(saved.lat)) || !Number.isFinite(Number(saved.lon)) || !Number.isFinite(Number(saved.dist))) {
+      return {...window.PLANE_RADAR_DEFAULTS};
+    }
+    return {...window.PLANE_RADAR_DEFAULTS, lat: saved.lat, lon: saved.lon, dist: saved.dist};
+  } catch (error) {
+    return {...window.PLANE_RADAR_DEFAULTS};
+  }
+}
+function saveSessionSettings(settingsToSave) {
+  try {
+    sessionStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({
+      lat: settingsToSave.lat, lon: settingsToSave.lon, dist: settingsToSave.dist,
+    }));
+  } catch (error) {
+    console.warn("Unable to save tracking settings:", error);
+  }
+}
+let settings = readSessionSettings();
 let secondsUntilRefresh = 0;
 let countdownTimer;
 let trackedAircraft = null;
@@ -444,6 +465,7 @@ $("#settings-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const formData = new FormData(event.currentTarget);
   settings = Object.fromEntries(formData.entries());
+  saveSessionSettings(settings);
   loadLocation();
   loadAircraft();
 });
@@ -472,6 +494,9 @@ if (mobileSuggestion && isMobileDevice() && !localStorage.getItem("plane-radar-m
 }
 
 applyLocale();
+Object.entries({lat: settings.lat, lon: settings.lon, dist: settings.dist}).forEach(([name, value]) => {
+  $(`#settings-form [name="${name}"]`).value = value;
+});
 window.addEventListener("load", () => loadLocation(true), {once: true});
 $("#settings-form button[type='submit']").click();
 startCountdown();
