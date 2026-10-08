@@ -107,12 +107,14 @@ Na página desktop, clicar em uma aeronave fixa o rastreamento nela. Sem seleç�
 
 ```text
 GET /api/aircraft?lat={lat}&lon={lon}&dist={dist}
+GET /api/nearest-aircraft?lat={lat}&lon={lon}&dist={dist}
 GET /api/flight-info?callsign={callsign}
 GET /api/location?lat={lat}&lon={lon}&localityLanguage={pt|en}
 POST /api/presence
 ```
 
 - `/api/aircraft` consulta o endpoint v3 do adsb.fi. O backend reserva os slots das consultas com intervalo mínimo de 2 segundos, evitando colisões quando várias sessões estão abertas ao mesmo tempo.
+- `/api/nearest-aircraft` retorna a aeronave mais próxima, todos os dados ADS-B exibidos nas tabelas, o enriquecimento de companhia/rota em `flight_info` e `location` com cidade, subdivisão principal e país.
 - `/api/flight-info` consulta o ADSBdb pelo callsign retornado pela API ADS-B e mantém cache no servidor por 15 minutos.
 - `/api/location` consulta o reverse geocoding da API BDC. A consulta ocorre no carregamento e quando latitude, longitude ou idioma mudam, não a cada refresh de aeronaves.
 - `/api/presence` registra um identificador anônimo do navegador e retorna a quantidade de sessões ativas.

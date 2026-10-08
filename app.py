@@ -56,6 +56,28 @@ def register_presence(client_id):
         return len(active_presence)
 
 
+def reverse_geocode(latitude, longitude, locality_language="pt"):
+    response = requests.get(
+        REVERSE_GEOCODE_API_URL,
+        params={
+            "latitude": latitude,
+            "longitude": longitude,
+            "localityLanguage": locality_language,
+        },
+        headers={"User-Agent": "PlaneRadar/1.0"},
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return {
+        "city": payload.get("city", ""),
+        "principalsubdivision": payload.get(
+            "principalSubdivision", payload.get("principalsubdivision", "")
+        ),
+        "countryname": payload.get("countryName", payload.get("countryname", "")),
+    }
+
+
 def startup_settings():
     parser = argparse.ArgumentParser(
         description="Run PlaneRadar with a default tracking location."
@@ -240,6 +262,87 @@ def aircraft():
     )
 
 
+@app.get("/api/nearest-aircraft")
+def nearest_aircraft():
+    try:
+        latitude, longitude, distance = parse_location_args(request.args)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    url = API_BASE_URL.format(
+        lat=f"{latitude:.6f}",
+        lon=f"{longitude:.6f}",
+        distance=f"{distance:g}",
+    )
+    try:
+        response = request_adsb(url)
+        response.raise_for_status()
+        payload = response.json()
+    except requests.HTTPError as error:
+        status_code = error.response.status_code if error.response is not None else 502
+        if status_code == 429:
+            return jsonify({"error": "The ADS-B service rate limit was reached. Please try again shortly."}), 429
+        return jsonify({"error": "The ADS-B service rejected this request." if status_code in (400, 401, 403, 404) else "The ADS-B service is temporarily unavailable."}), 502
+    except requests.RequestException as error:
+        app.logger.warning("Nearest ADS-B request failed: %s", error)
+        return jsonify({"error": "The ADS-B service is temporarily unavailable."}), 502
+    except ValueError:
+        return jsonify({"error": "The ADS-B service returned invalid JSON."}), 502
+
+    aircraft_list = payload.get("ac", [])
+    location_data = {"latitude": latitude, "longitude": longitude, "distance": distance}
+    try:
+        location_data.update(reverse_geocode(latitude, longitude))
+    except (requests.RequestException, ValueError) as error:
+        app.logger.warning("Nearest location lookup failed: %s", error)
+    nearest = min(
+        aircraft_list,
+        key=lambda item: float(item.get("dst")) if item.get("dst") is not None else float("inf"),
+        default=None,
+    )
+    if nearest is None:
+        return jsonify({
+            "aircraft": None,
+            "flight_info": None,
+            "location": location_data,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        })
+    callsign = str(nearest.get("flight", "")).strip().upper()
+    route = None
+    if callsign:
+        cached = flight_info_cache.get(callsign)
+        if cached and time.monotonic() - cached["cached_at"] < FLIGHT_INFO_CACHE_TTL:
+            route = cached["payload"]
+        else:
+            try:
+                route_response = requests.get(
+                    CALLSIGN_API_URL.format(callsign=requests.utils.quote(callsign, safe="")),
+                    headers={"User-Agent": "PlaneRadar/1.0"},
+                    timeout=REQUEST_TIMEOUT,
+                )
+                if route_response.ok:
+                    route_data = route_response.json().get("response", {}).get("flightroute")
+                    if route_data:
+                        route = {
+                            "callsign": route_data.get("callsign"),
+                            "callsign_icao": route_data.get("callsign_icao"),
+                            "callsign_iata": route_data.get("callsign_iata"),
+                            "airline": route_data.get("airline"),
+                            "origin": route_data.get("origin"),
+                            "destination": route_data.get("destination"),
+                        }
+                        flight_info_cache[callsign] = {"cached_at": time.monotonic(), "payload": route}
+            except (requests.RequestException, ValueError):
+                app.logger.warning("Nearest flight info unavailable for %s", callsign)
+
+    return jsonify({
+        "aircraft": nearest,
+        "flight_info": route,
+        "location": location_data,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
 @app.post("/api/presence")
 def presence():
     payload = request.get_json(silent=True) or {}
@@ -265,31 +368,14 @@ def location():
         return jsonify({"error": "localityLanguage must be pt or en."}), 400
 
     try:
-        response = requests.get(
-            REVERSE_GEOCODE_API_URL,
-            params={
-                "latitude": latitude,
-                "longitude": longitude,
-                "localityLanguage": locality_language,
-            },
-            headers={"User-Agent": "PlaneRadar/1.0"},
-            timeout=REQUEST_TIMEOUT,
-        )
-        response.raise_for_status()
-        payload = response.json()
+        location_data = reverse_geocode(latitude, longitude, locality_language)
     except requests.RequestException as error:
         app.logger.warning("Reverse geocoding request failed: %s", error)
         return jsonify({"error": "The location service is temporarily unavailable."}), 502
     except ValueError:
         return jsonify({"error": "The location service returned invalid JSON."}), 502
 
-    return jsonify(
-        {
-            "city": payload.get("city", ""),
-            "principalsubdivision": payload.get("principalSubdivision", payload.get("principalsubdivision", "")),
-            "countryname": payload.get("countryName", payload.get("countryname", "")),
-        }
-    )
+    return jsonify(location_data)
 
 if __name__ == "__main__":
     app.run(
