@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 
 import requests
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, url_for
 
 app = Flask(__name__)
 
@@ -18,6 +18,7 @@ DEFAULT_LATITUDE = os.getenv("PLANE_RADAR_LAT", "-21.805684")
 DEFAULT_LONGITUDE = os.getenv("PLANE_RADAR_LON", "-48.139653")
 DEFAULT_DISTANCE = os.getenv("PLANE_RADAR_DISTANCE", "25")
 DEFAULT_POLLING = int(os.getenv("PLANE_RADAR_POLLING", "10"))
+AIRLINE_LOGO_API_KEY = os.getenv("PLANE_RADAR_AIRLINE_LOGO_API_KEY", "").strip()
 REQUEST_TIMEOUT = 12
 ADSB_MIN_REQUEST_INTERVAL = 2
 PRESENCE_TIMEOUT = 45
@@ -26,6 +27,8 @@ flight_info_cache = {}
 adsb_request_lock = threading.Lock()
 presence_lock = threading.Lock()
 active_presence = {}
+silhouette_cache = {}
+silhouette_lock = threading.Lock()
 last_adsb_request_at = 0.0
 
 
@@ -78,6 +81,55 @@ def reverse_geocode(latitude, longitude, locality_language="pt"):
     }
 
 
+def get_silhouette(aircraft_type):
+    with silhouette_lock:
+        if aircraft_type in silhouette_cache:
+            return silhouette_cache[aircraft_type]
+
+    url = (
+        "https://raw.githubusercontent.com/plane-watch/pw-silhouettes/main/"
+        f"silhouettes/{requests.utils.quote(aircraft_type, safe='')}.svg"
+    )
+    try:
+        response = requests.get(
+            url,
+            headers={"User-Agent": "PlaneRadar/1.0"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        content = response.content if response.ok else None
+    except requests.RequestException as error:
+        app.logger.warning("Silhouette lookup failed for %s: %s", aircraft_type, error)
+        content = None
+
+    with silhouette_lock:
+        silhouette_cache[aircraft_type] = content
+    return content
+
+
+def silhouette_url(aircraft):
+    aircraft_type = str(aircraft.get("t", "")).strip().upper()
+    if not re.fullmatch(r"[A-Z0-9_-]{2,10}", aircraft_type):
+        return None
+    if get_silhouette(aircraft_type) is None:
+        return None
+    return url_for("silhouette", aircraft_type=aircraft_type, _external=True)
+
+
+def airline_logo_url(route):
+    if not AIRLINE_LOGO_API_KEY:
+        return None
+    airline = route.get("airline") if route else None
+    icao = airline.get("icao") if isinstance(airline, dict) else None
+    if not icao:
+        return None
+    return (
+        "https://airlines-api.logostream.dev/airlines/icao/"
+        f"{requests.utils.quote(str(icao).strip().upper(), safe='')}"
+        f"?key={requests.utils.quote(AIRLINE_LOGO_API_KEY, safe='')}"
+        "&variant=tail&format=png&radius=9999&loop=false"
+    )
+
+
 def startup_settings():
     parser = argparse.ArgumentParser(
         description="Run PlaneRadar with a default tracking location."
@@ -86,6 +138,7 @@ def startup_settings():
     parser.add_argument("longitude", nargs="?", help="Default tracking longitude")
     parser.add_argument("distance", nargs="?", help="Default tracking distance in NM")
     parser.add_argument("polling", nargs="?", help="Polling interval in seconds (minimum 3)")
+    parser.add_argument("airline_logo_api_key", nargs="?", help="Optional airline logo API key")
 
     args = parser.parse_args(sys.argv[1:])
 
@@ -111,9 +164,9 @@ def startup_settings():
             parser.error("polling must be at least 3 seconds")
         if not polling.is_integer():
             parser.error("polling must be a whole number of seconds")
-        return args.latitude, args.longitude, args.distance, int(polling)
+        return args.latitude, args.longitude, args.distance, int(polling), args.airline_logo_api_key or ""
 
-    return DEFAULT_LATITUDE, DEFAULT_LONGITUDE, DEFAULT_DISTANCE, DEFAULT_POLLING
+    return DEFAULT_LATITUDE, DEFAULT_LONGITUDE, DEFAULT_DISTANCE, DEFAULT_POLLING, AIRLINE_LOGO_API_KEY
 
 
 if __name__ == "__main__":
@@ -122,6 +175,7 @@ if __name__ == "__main__":
         DEFAULT_LONGITUDE,
         DEFAULT_DISTANCE,
         DEFAULT_POLLING,
+        AIRLINE_LOGO_API_KEY,
     ) = startup_settings()
 
 
@@ -304,6 +358,8 @@ def nearest_aircraft():
         return jsonify({
             "aircraft": None,
             "flight_info": None,
+            "airline_logo": None,
+            "silhouette": None,
             "location": location_data,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         })
@@ -338,6 +394,8 @@ def nearest_aircraft():
     return jsonify({
         "aircraft": nearest,
         "flight_info": route,
+        "airline_logo": airline_logo_url(route),
+        "silhouette": silhouette_url(nearest),
         "location": location_data,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     })
@@ -350,6 +408,19 @@ def presence():
     if not isinstance(client_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,100}", client_id):
         return jsonify({"error": "A valid client identifier is required."}), 400
     return jsonify({"active_users": register_presence(client_id)})
+
+
+@app.get("/api/silhouette/<aircraft_type>")
+def silhouette(aircraft_type):
+    normalized_type = aircraft_type.strip().upper()
+    if normalized_type.endswith(".SVG"):
+        normalized_type = normalized_type[:-4]
+    if not re.fullmatch(r"[A-Z0-9_-]{2,10}", normalized_type):
+        return jsonify({"error": "Invalid aircraft type."}), 400
+    content = get_silhouette(normalized_type)
+    if content is None:
+        return jsonify({"error": "Silhouette not found."}), 404
+    return Response(content, mimetype="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/api/location")

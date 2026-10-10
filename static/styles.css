@@ -75,18 +75,46 @@ button:hover { filter: brightness(1.1); }
 .tracked-icon svg { width: 13px; height: 13px; transform: rotate(0deg); fill: currentColor; }
 .tracked-caption { color: var(--accent); }
 .radar-caption { text-align: center; margin: 0; }.radar-caption strong { color: var(--text); }
-.flight-info { display: flex; flex-direction: column; gap: 4px; margin: 12px auto 0; color: var(--muted); font: 11px "DM Mono", monospace; text-align: center; }
+.tracked-summary { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 6px; min-height: 42px; }
+.tracked-details { min-width: 0; }
+.tracked-silhouette { display: inline-flex; align-items: center; color: var(--muted); font: 11px "DM Mono", monospace; }
+.tracked-silhouette img { width: 42px; height: 42px; object-fit: contain; transform-origin: center; filter: brightness(0) saturate(100%) invert(82%) sepia(34%) saturate(668%) hue-rotate(114deg) brightness(101%) contrast(84%); }
+.flight-info { display: flex; flex-direction: column; gap: 4px; margin: 6px auto 0; color: var(--muted); font: 11px "DM Mono", monospace; text-align: center; }
 .flight-info strong { color: var(--text); font: 600 13px "Space Grotesk", sans-serif; }.flight-info b { padding: 0 6px; color: var(--accent); font-weight: 400; }
 .summary { display: grid; gap: 19px; }.metric { min-height: 0; padding: 22px; display: flex; flex-direction: column; justify-content: center; }
 .metric strong { margin: 4px 0; color: var(--text); font-size: 37px; letter-spacing: -.07em; }.metric-note { color: var(--muted); font: 11px "DM Mono"; }
 .flights { padding: 23px; }.data-source a { color: var(--accent); }.table-wrap { overflow-x: auto; } table { width: 100%; border-collapse: collapse; font-size: 13px; } th { color: var(--muted); font: 10px "DM Mono"; letter-spacing: .08em; text-align: left; text-transform: uppercase; } th, td { padding: 14px 12px; border-bottom: 1px solid var(--line); } th:first-child, td:first-child { padding-left: 0; } th:last-child, td:last-child { padding-right: 0; text-align: right; }
-td { color: #c5d7dc; }.flight-code { color: var(--accent); font: 600 14px "DM Mono"; }.subtext { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }.empty-state, .message { color: var(--muted); text-align: center; padding: 27px; }.message { margin-bottom: 10px; padding: 10px; border: 1px solid rgba(255,190,114,.3); border-radius: 6px; color: var(--warning); background: rgba(255,190,114,.06); }.message[hidden] { display: none; } footer { padding: 20px 0; color: var(--muted); font: 10px "DM Mono"; text-align: center; }
+td { color: #c5d7dc; }.flight-code { color: var(--accent); font: 600 14px "DM Mono"; }.flight-iata { display: block; margin-top: 2px; color: var(--accent); font: 11px "DM Mono"; }.subtext { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }.empty-state, .message { color: var(--muted); text-align: center; padding: 27px; }.message { position: relative; margin-bottom: 10px; padding: 10px 38px 10px 10px; border: 1px solid rgba(255,190,114,.3); border-radius: 6px; color: var(--warning); background: rgba(255,190,114,.06); }.message button { position: absolute; top: 4px; right: 7px; padding: 0 4px; color: var(--muted); background: transparent; font-size: 18px; line-height: 1; }.message[hidden] { display: none; } footer { padding: 20px 0; color: var(--muted); font: 10px "DM Mono"; text-align: center; }
+.mobile-flight-cell { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.mobile-flight-silhouette-wrap { display: inline-flex; width: 34px; flex: 0 0 34px; align-items: center; justify-content: center; }
+.mobile-flight-silhouette { width: 30px; height: 30px; object-fit: contain; filter: brightness(0) saturate(100%) invert(82%) sepia(34%) saturate(668%) hue-rotate(114deg) brightness(101%) contrast(84%); }
+.flight-cell { display: flex; align-items: center; gap: 7px; }
+.flight-silhouette-container { display: inline-flex; flex: 0 0 34px; align-items: center; justify-content: center; }
+.flight-silhouette-wrap { display: inline-flex; align-items: center; justify-content: center; }
+.flight-silhouette { width: 30px; height: 30px; object-fit: contain; filter: brightness(0) saturate(100%) invert(82%) sepia(34%) saturate(668%) hue-rotate(114deg) brightness(101%) contrast(84%); }
 .military-badge { margin-left: 6px; color: var(--warning); font: 600 12px "DM Mono", monospace; white-space: nowrap; }
 .active-users { margin-left: 10px; opacity: .7; }
 .active-users strong { color: var(--text); font-weight: 500; }
 .active-users > span { color: var(--accent); }
 @media (max-width: 800px) { .app-shell { padding: 23px 15px; }.controls { align-items: stretch; flex-direction: column; }.controls form { justify-content: flex-start; flex-wrap: wrap; }.dashboard { grid-template-columns: 1fr; }.summary { grid-template-columns: repeat(3, 1fr); }.metric { padding: 15px; }.metric strong { font-size: 28px; } }
 @media (max-width: 500px) { .summary { grid-template-columns: 1fr; }.panel-title { align-items: flex-start; flex-direction: column; gap: 8px; } input { width: 125px; } }
+@media (max-width: 600px) {
+  .flights { padding: 16px 12px; }
+  .flights .panel-title { align-items: flex-start; gap: 8px; }
+  .flights .data-source { font-size: 9px; }
+  .flights .table-wrap { overflow: visible; }
+  .radar-flight-table { display: block; }
+  .radar-flight-table thead { display: none; }
+  .radar-flight-table tbody { display: grid; gap: 10px; }
+  .radar-flight-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .radar-flight-table td { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; padding: 8px 0; border: 0; text-align: left; overflow-wrap: anywhere; }
+  .radar-flight-table td::before { margin-bottom: 4px; color: var(--muted); content: attr(data-label); font: 10px "DM Mono"; letter-spacing: .08em; text-transform: uppercase; }
+  .radar-flight-table td:first-child { grid-column: 1 / -1; }
+  .radar-flight-table td:last-child { padding-right: 0; text-align: left; }
+  .radar-flight-table .flight-cell { display: flex; min-width: 0; flex-direction: row; align-items: center; gap: 7px; }
+  .radar-flight-table td:first-child::before { display: block; }
+  .radar-flight-table .subtext { max-width: 100%; }
+}
 .mobile-page .app-shell { max-width: 1500px; }
 .mobile-controls, .mobile-table, .mobile-settings { padding: 18px 22px; }
 .mobile-controls, .mobile-table-heading { display: flex; align-items: center; justify-content: space-between; }
@@ -94,6 +122,12 @@ td { color: #c5d7dc; }.flight-code { color: var(--accent); font: 600 14px "DM Mo
 .live-label { color: var(--text); font: 600 18px "Space Grotesk", sans-serif; }
 .mobile-settings { margin-bottom: 14px; }
 .mobile-settings form { justify-content: flex-start; flex-wrap: wrap; }
+.mobile-location-actions { display: flex; align-self: flex-end; gap: 8px; }
+.mobile-location-actions button { min-height: 56px; height: 56px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; }
+.mobile-location-actions button:last-child { display: inline-flex; align-items: center; justify-content: center; gap: 7px; color: #d8eeea; background: #0f8171; }
+.mobile-location-actions button:last-child:hover { filter: brightness(1.08); }
+.gps-icon { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.mobile-location-actions button:disabled { cursor: wait; opacity: .65; }
 .mobile-countdown { margin-left: auto; color: var(--muted); font: 10px "DM Mono", monospace; white-space: nowrap; }
 .mobile-countdown strong { margin-left: 5px; color: var(--text); font-size: 16px; }
 .mobile-table-heading { gap: 20px; margin-bottom: 13px; }
@@ -110,7 +144,8 @@ td { color: #c5d7dc; }.flight-code { color: var(--accent); font: 600 14px "DM Mo
   .mobile-settings form { gap: 8px; }
   .mobile-settings label { flex: 1 1 30%; }
   .mobile-settings input { width: 100%; }
-  .mobile-settings button { width: 100%; margin-top: 4px; }
+  .mobile-location-actions { width: 100%; }
+  .mobile-location-actions button { flex: 1; width: 50%; margin-top: 4px; }
   .mobile-countdown { width: 100%; margin: 4px 0 0; text-align: right; }
   .mobile-table { padding: 14px 10px; }
   .mobile-table .table-wrap { margin: 0 -10px; padding: 0 10px; }

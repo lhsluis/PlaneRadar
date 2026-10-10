@@ -81,6 +81,9 @@ let locationInfo = null;
 let locationRequestKey = null;
 const flightInfoByCallsign = new Map();
 const flightInfoRequests = new Map();
+const SILHOUETTE_BASE_URL = "/api/silhouette/";
+const GENERIC_SILHOUETTE_URL = "/static/paperplane.svg";
+const unavailableSilhouettes = new Set();
 
 const $ = (selector) => document.querySelector(selector);
 const t = (key) => TRANSLATIONS[locale][key] || TRANSLATIONS["pt-BR"][key] || key;
@@ -209,6 +212,26 @@ function formatAltitude(aircraft) {
 
 function formatFlight(aircraft) {
   return (aircraft.flight || aircraft.hex || t("unknown")).trim() || aircraft.hex || t("unknown");
+}
+
+function flightSilhouette(aircraft) {
+  const typeCode = String(aircraft.t || "").trim().toUpperCase();
+  if (!typeCode) return "";
+  const source = unavailableSilhouettes.has(typeCode)
+    ? GENERIC_SILHOUETTE_URL
+    : `${SILHOUETTE_BASE_URL}${encodeURIComponent(typeCode)}`;
+  return `<span class="flight-silhouette-wrap"><img class="flight-silhouette" src="${source}" alt="" loading="lazy" onerror="markSilhouetteUnavailable('${typeCode}', this)"></span>`;
+}
+
+function markSilhouetteUnavailable(typeCode, image) {
+  unavailableSilhouettes.add(typeCode);
+  image.onerror = null;
+  image.src = GENERIC_SILHOUETTE_URL;
+}
+
+function flightIata(aircraft) {
+  const info = flightInfoByCallsign.get(String(aircraft.flight || "").trim());
+  return String(info?.callsign_iata || "").trim();
 }
 
 function isMilitary(aircraft) {
@@ -362,11 +385,15 @@ function renderTrackedAircraft() {
   const callsign = $("#tracked-callsign");
   const trackedCaption = $("#tracked-caption");
   const speedCaption = $("#speed-caption");
+  const silhouette = $("#tracked-silhouette");
+  const silhouetteImage = $("#tracked-silhouette-image");
   if (!trackedAircraft || !trackedPosition) {
     marker.hidden = true;
     if (callsign) callsign.textContent = "—";
     if (trackedCaption) trackedCaption.textContent = "—";
     if (speedCaption) speedCaption.textContent = "—";
+    if (silhouette) silhouette.hidden = true;
+    if (silhouetteImage) silhouetteImage.style.transform = "";
     return;
   }
   marker.hidden = false;
@@ -375,6 +402,31 @@ function renderTrackedAircraft() {
   if (callsign) callsign.textContent = formatFlight(trackedAircraft);
   if (trackedCaption) trackedCaption.textContent = formatFlight(trackedAircraft);
   if (speedCaption) speedCaption.textContent = formatNumber(trackedAircraft.gs, 1);
+  if (silhouette && silhouetteImage) {
+    const typeCode = String(trackedAircraft.t || "").trim().toUpperCase();
+    const silhouetteHeading = Number(trackedAircraft.track ?? trackedAircraft.dir);
+    silhouette.hidden = !typeCode;
+    silhouetteImage.hidden = !typeCode;
+    silhouetteImage.alt = typeCode ? `Silhouette ${typeCode}` : "";
+    silhouetteImage.style.transform = Number.isFinite(silhouetteHeading)
+      ? `rotate(${silhouetteHeading}deg)`
+      : "";
+    silhouetteImage.onerror = () => {
+      unavailableSilhouettes.add(typeCode);
+      silhouetteImage.onerror = null;
+      silhouetteImage.dataset.source = GENERIC_SILHOUETTE_URL;
+      silhouetteImage.src = GENERIC_SILHOUETTE_URL;
+    };
+    if (typeCode) {
+      const source = unavailableSilhouettes.has(typeCode)
+        ? GENERIC_SILHOUETTE_URL
+        : `${SILHOUETTE_BASE_URL}${encodeURIComponent(typeCode)}`;
+      if (silhouetteImage.dataset.source !== source) {
+        silhouetteImage.dataset.source = source;
+        silhouetteImage.src = source;
+      }
+    }
+  }
   const heading = Number(trackedAircraft.track);
   const icon = $(".tracked-icon svg");
   if (icon && Number.isFinite(heading)) {
@@ -423,14 +475,14 @@ function renderFlights(aircraft) {
     .sort((a, b) => (a.dst ?? Infinity) - (b.dst ?? Infinity))
     .map((plane) => `
       <tr>
-        <td><span class="flight-code">${formatFlight(plane)}</span><span class="subtext">${plane.hex || "—"} · ${plane.r || `${t("unavailable")}`}</span></td>
-        <td>${airlineDetails(flightInfoByCallsign.get(String(plane.flight || "").trim()))}</td>
-        <td><span class="subtext">${locationDetails(flightInfoByCallsign.get(String(plane.flight || "").trim())?.origin, "originUnknown")}</span><span class="subtext">${locationDetails(flightInfoByCallsign.get(String(plane.flight || "").trim())?.destination, "destinationUnknown")}</span></td>
-        <td>${aircraftName(plane)}<span class="subtext">${plane.desc || `${t("unknown")} ${t("aircraft").toLowerCase()}`}</span></td>
-        <td>${formatAltitude(plane)}</td>
-        <td>${plane.gs == null ? "—" : `${formatNumber(plane.gs, 1)} kt`}</td>
-        <td>${plane.track == null ? "—" : `${formatNumber(plane.track, 0)}°`}</td>
-        <td>${plane.dst == null ? "—" : `${formatNumber(plane.dst, 2)} NM`}</td>
+        <td data-label="${t("flight")}"><div class="flight-cell"><span class="flight-silhouette-container">${flightSilhouette(plane)}</span><span><span class="flight-code">${formatFlight(plane)}</span>${flightIata(plane) ? `<span class="flight-iata">${flightIata(plane)}</span>` : ""}<span class="subtext">${plane.hex || "—"} · ${plane.r || `${t("unavailable")}`}</span></span></div></td>
+        <td data-label="${t("airline")}">${airlineDetails(flightInfoByCallsign.get(String(plane.flight || "").trim()))}</td>
+        <td data-label="${t("route")}"><span class="subtext">${locationDetails(flightInfoByCallsign.get(String(plane.flight || "").trim())?.origin, "originUnknown")}</span><span class="subtext">${locationDetails(flightInfoByCallsign.get(String(plane.flight || "").trim())?.destination, "destinationUnknown")}</span></td>
+        <td data-label="${t("aircraft")}">${aircraftName(plane)}<span class="subtext">${plane.desc || `${t("unknown")} ${t("aircraft").toLowerCase()}`}</span></td>
+        <td data-label="${t("altitude")}">${formatAltitude(plane)}</td>
+        <td data-label="${t("speed")}">${plane.gs == null ? "—" : `${formatNumber(plane.gs, 1)} kt`}</td>
+        <td data-label="${t("heading")}">${plane.track == null ? "—" : `${formatNumber(plane.track, 0)}°`}</td>
+        <td data-label="${t("distance")}">${plane.dst == null ? "—" : `${formatNumber(plane.dst, 2)} NM`}</td>
       </tr>
     `).join("");
 }

@@ -6,7 +6,7 @@
     <meta name="description" content="Live ADS-B flight tracker for your location">
     <title>PlaneRadar</title>
     <link rel="icon" href="{{ url_for('static', filename='logo.ico') }}" type="image/x-icon">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20261008-11') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20261010-11') }}">
   </head>
   <body>
     <main class="app-shell">
@@ -90,10 +90,17 @@
               </div>
             </div>
           </div>
-          <p class="radar-caption"><span data-i18n="tracking">Rastreando</span> <strong id="tracked-caption">—</strong> · <span data-i18n="groundspeed">velocidade no solo</span> <strong id="speed-caption">—</strong> kt</p>
-          <div id="flight-info" class="flight-info" hidden>
-            <strong id="flight-airline">—</strong>
-            <span><span id="flight-origin">—</span> <b>→</b> <span id="flight-destination">—</span></span>
+          <div class="tracked-summary">
+            <div id="tracked-silhouette" class="tracked-silhouette" hidden>
+              <img id="tracked-silhouette-image" alt="" loading="lazy">
+            </div>
+            <div class="tracked-details">
+              <p class="radar-caption"><span data-i18n="tracking">Rastreando</span> <strong id="tracked-caption">—</strong> · <span data-i18n="groundspeed">velocidade no solo</span> <strong id="speed-caption">—</strong> kt</p>
+              <div id="flight-info" class="flight-info" hidden>
+                <strong id="flight-airline">—</strong>
+                <span><span id="flight-origin">—</span> <b>→</b> <span id="flight-destination">—</span></span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -126,7 +133,7 @@
         </div>
         <div id="message" class="message" role="status" hidden></div>
         <div class="table-wrap">
-          <table>
+          <table class="radar-flight-table">
             <thead>
               <tr>
                 <th data-i18n="flight">Voo</th>
@@ -150,6 +157,6 @@
     <script>
       window.PLANE_RADAR_DEFAULTS = {{ defaults | tojson }};
     </script>
-    <script src="{{ url_for('static', filename='app.js', v='20261008-19') }}"></script>
+    <script src="{{ url_for('static', filename='app.js', v='20261010-07') }}"></script>
   </body>
 </html>

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>PlaneRadar · Mobile</title>
     <link rel="icon" href="{{ url_for('static', filename='logo.ico') }}" type="image/x-icon">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20261008-12') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20261010-11') }}">
   </head>
   <body class="mobile-page">
     <main class="app-shell">
@@ -24,7 +24,10 @@
           <label><span data-i18n="latitude">Latitude</span><input name="lat" type="number" step="any" value="{{ defaults.latitude }}" required></label>
           <label><span data-i18n="longitude">Longitude</span><input name="lon" type="number" step="any" value="{{ defaults.longitude }}" required></label>
           <label><span data-i18n="radius">Raio</span> (NM)<input name="dist" type="number" min="0.1" max="250" step="0.1" value="{{ defaults.distance }}" required></label>
-          <button type="submit" data-i18n="updateArea">Atualizar área</button>
+          <div class="mobile-location-actions">
+            <button type="submit" data-i18n="updateArea">Atualizar área</button>
+            <button type="button" id="mobile-geolocate"><svg class="gps-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M12 5a7 7 0 1 0 7 7"></path></svg><span data-i18n="locateMe">Rastrear minha posição</span></button>
+          </div>
           <span class="mobile-countdown"><span data-i18n="nextRefresh">PRÓXIMA ATUALIZAÇÃO</span> <strong id="mobile-countdown">—</strong></span>
         </form>
       </section>
@@ -32,7 +35,7 @@
         <div><p class="eyebrow" data-i18n="liveTraffic">TRÁFEGO AO VIVO</p><span class="live-label" data-i18n="live">Ao vivo</span></div>
         <div class="connection-status" id="mobile-connection"><span class="status-dot"></span><span id="mobile-status">Conectando</span></div>
       </section>
-      <div id="mobile-message" class="message" hidden></div>
+      <div id="mobile-message" class="message" hidden><span id="mobile-message-text"></span><button type="button" id="mobile-message-close" aria-label="Fechar">×</button></div>
       <section class="mobile-table panel">
         <div class="mobile-table-heading">
           <div><p class="eyebrow" data-i18n="liveTraffic">TRÁFEGO AO VIVO</p><h2 data-i18n="detectedFlights">Voos detectados</h2></div>
@@ -52,6 +55,6 @@
       <footer><span data-i18n="source">Fonte</span>: <a href="https://adsb.fi/" target="_blank" rel="noreferrer">adsb.fi</a> | <a href="https://www.adsbdb.com/" target="_blank" rel="noreferrer">adsbdb.com</a> <span id="active-users-label" class="active-users" data-i18n-html="activeUsers" aria-live="polite"></span></footer>
     </main>
     <script>window.PLANE_RADAR_DEFAULTS = {{ defaults | tojson }};</script>
-    <script src="{{ url_for('static', filename='mobile.js', v='20261008-19') }}"></script>
+    <script src="{{ url_for('static', filename='mobile.js', v='20261010-06') }}"></script>
   </body>
 </html>

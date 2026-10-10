@@ -9,5 +9,6 @@ services:
       PLANE_RADAR_LON: "-48.139653"
       PLANE_RADAR_DISTANCE: "25"
       PLANE_RADAR_POLLING: "10"
+      PLANE_RADAR_AIRLINE_LOGO_API_KEY: "DUMMY-AIRLINE-LOGO-API-KEY" #optional - free tier from https://airline.logostream.dev/pricing
       FLASK_PORT: "5000"
     restart: unless-stopped
