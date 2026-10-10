@@ -7,9 +7,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN useradd --create-home appuser \
-    && chown -R appuser:appuser /app
-USER appuser
+RUN groupadd --gid 65536 dockergroup \
+    && useradd --create-home --uid 1030 --gid 65536 dockerlimited \
+    && mkdir -p /data \
+    && chown -R dockerlimited:dockergroup /app /data
+USER dockerlimited
 
 ENV PYTHONUNBUFFERED=1 \
     FLASK_HOST=0.0.0.0 \
@@ -18,7 +20,8 @@ ENV PYTHONUNBUFFERED=1 \
     PLANE_RADAR_LON=-48.139653 \
     PLANE_RADAR_DISTANCE=25 \
     PLANE_RADAR_POLLING=10 \
-    PLANE_RADAR_AIRLINE_LOGO_API_KEY=
+    PLANE_RADAR_AIRLINE_LOGO_API_KEY= \
+    PLANE_RADAR_CACHE_DB=/data/planeradar-cache.sqlite3
 
 EXPOSE 5000
 

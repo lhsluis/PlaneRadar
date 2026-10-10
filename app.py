@@ -1,6 +1,8 @@
 import argparse
+import json
 import os
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -19,17 +21,81 @@ DEFAULT_LONGITUDE = os.getenv("PLANE_RADAR_LON", "-48.139653")
 DEFAULT_DISTANCE = os.getenv("PLANE_RADAR_DISTANCE", "25")
 DEFAULT_POLLING = int(os.getenv("PLANE_RADAR_POLLING", "10"))
 AIRLINE_LOGO_API_KEY = os.getenv("PLANE_RADAR_AIRLINE_LOGO_API_KEY", "").strip()
+CACHE_DB_PATH = os.getenv(
+    "PLANE_RADAR_CACHE_DB",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "planeradar-cache.sqlite3"),
+)
 REQUEST_TIMEOUT = 12
 ADSB_MIN_REQUEST_INTERVAL = 2
 PRESENCE_TIMEOUT = 45
 FLIGHT_INFO_CACHE_TTL = 900
-flight_info_cache = {}
+SILHOUETTE_CACHE_TTL = 86400
+AIRLINE_LOGO_CACHE_TTL = 604800
+AIRLINE_LOGO_CACHE_NAMESPACE = "airline_logo"
+cache_lock = threading.Lock()
 adsb_request_lock = threading.Lock()
 presence_lock = threading.Lock()
 active_presence = {}
-silhouette_cache = {}
-silhouette_lock = threading.Lock()
 last_adsb_request_at = 0.0
+
+
+def open_cache_db():
+    cache_directory = os.path.dirname(CACHE_DB_PATH)
+    if cache_directory:
+        os.makedirs(cache_directory, exist_ok=True)
+    connection = sqlite3.connect(CACHE_DB_PATH, timeout=30)
+    connection.execute("PRAGMA busy_timeout = 30000")
+    return connection
+
+
+def initialize_cache_db():
+    with open_cache_db() as connection:
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cache_entries (
+                namespace TEXT NOT NULL,
+                cache_key TEXT NOT NULL,
+                payload BLOB,
+                expires_at REAL NOT NULL,
+                PRIMARY KEY (namespace, cache_key)
+            )
+            """
+        )
+
+
+def read_cache(namespace, cache_key):
+    with cache_lock, open_cache_db() as connection:
+        row = connection.execute(
+            "SELECT payload, expires_at FROM cache_entries WHERE namespace = ? AND cache_key = ?",
+            (namespace, cache_key),
+        ).fetchone()
+        if row is None:
+            return False, None
+        if row[1] <= time.time():
+            connection.execute(
+                "DELETE FROM cache_entries WHERE namespace = ? AND cache_key = ?",
+                (namespace, cache_key),
+            )
+            return False, None
+        return True, row[0]
+
+
+def write_cache(namespace, cache_key, payload, ttl):
+    with cache_lock, open_cache_db() as connection:
+        connection.execute(
+            """
+            INSERT INTO cache_entries (namespace, cache_key, payload, expires_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(namespace, cache_key) DO UPDATE SET
+                payload = excluded.payload,
+                expires_at = excluded.expires_at
+            """,
+            (namespace, cache_key, payload, time.time() + ttl),
+        )
+
+
+initialize_cache_db()
 
 
 def request_adsb(url):
@@ -82,9 +148,9 @@ def reverse_geocode(latitude, longitude, locality_language="pt"):
 
 
 def get_silhouette(aircraft_type):
-    with silhouette_lock:
-        if aircraft_type in silhouette_cache:
-            return silhouette_cache[aircraft_type]
+    found, cached = read_cache("silhouette", aircraft_type)
+    if found:
+        return cached
 
     url = (
         "https://raw.githubusercontent.com/plane-watch/pw-silhouettes/main/"
@@ -101,8 +167,7 @@ def get_silhouette(aircraft_type):
         app.logger.warning("Silhouette lookup failed for %s: %s", aircraft_type, error)
         content = None
 
-    with silhouette_lock:
-        silhouette_cache[aircraft_type] = content
+    write_cache("silhouette", aircraft_type, content, SILHOUETTE_CACHE_TTL)
     return content
 
 
@@ -119,15 +184,33 @@ def airline_logo_url(route):
     if not AIRLINE_LOGO_API_KEY:
         return None
     airline = route.get("airline") if route else None
-    icao = airline.get("icao") if isinstance(airline, dict) else None
-    if not icao:
+    icao = str(airline.get("icao", "")).strip().upper() if isinstance(airline, dict) else ""
+    if not re.fullmatch(r"[A-Z0-9]{2,4}", icao):
         return None
-    return (
+    found, _cached = read_cache(AIRLINE_LOGO_CACHE_NAMESPACE, icao)
+    if found:
+        return url_for("airline_logo", airline_icao=icao, _external=True)
+
+    logo_url = (
         "https://airlines-api.logostream.dev/airlines/icao/"
-        f"{requests.utils.quote(str(icao).strip().upper(), safe='')}"
+        f"{requests.utils.quote(icao, safe='')}"
         f"?key={requests.utils.quote(AIRLINE_LOGO_API_KEY, safe='')}"
         "&variant=tail&format=png&radius=9999&loop=false"
     )
+    try:
+        response = requests.get(
+            logo_url,
+            headers={"User-Agent": "PlaneRadar/1.0"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        content = response.content
+    except requests.RequestException as error:
+        app.logger.warning("Airline logo lookup failed for %s: %s", icao, error)
+        return None
+
+    write_cache(AIRLINE_LOGO_CACHE_NAMESPACE, icao, content, AIRLINE_LOGO_CACHE_TTL)
+    return url_for("airline_logo", airline_icao=icao, _external=True)
 
 
 def startup_settings():
@@ -230,9 +313,9 @@ def flight_info():
     if not re.fullmatch(r"[A-Z0-9][A-Z0-9 ._-]{1,15}", callsign):
         return jsonify({"error": "A valid callsign is required."}), 400
 
-    cached = flight_info_cache.get(callsign)
-    if cached and time.monotonic() - cached["cached_at"] < FLIGHT_INFO_CACHE_TTL:
-        return jsonify(cached["payload"])
+    found, cached_payload = read_cache("flight_info", callsign)
+    if found:
+        return jsonify(json.loads(cached_payload))
 
     url = CALLSIGN_API_URL.format(callsign=requests.utils.quote(callsign, safe=""))
     try:
@@ -265,7 +348,7 @@ def flight_info():
         "origin": route.get("origin"),
         "destination": route.get("destination"),
     }
-    flight_info_cache[callsign] = {"cached_at": time.monotonic(), "payload": result}
+    write_cache("flight_info", callsign, json.dumps(result), FLIGHT_INFO_CACHE_TTL)
     return jsonify(result)
 
 
@@ -366,9 +449,9 @@ def nearest_aircraft():
     callsign = str(nearest.get("flight", "")).strip().upper()
     route = None
     if callsign:
-        cached = flight_info_cache.get(callsign)
-        if cached and time.monotonic() - cached["cached_at"] < FLIGHT_INFO_CACHE_TTL:
-            route = cached["payload"]
+        found, cached_payload = read_cache("flight_info", callsign)
+        if found:
+            route = json.loads(cached_payload)
         else:
             try:
                 route_response = requests.get(
@@ -387,7 +470,7 @@ def nearest_aircraft():
                             "origin": route_data.get("origin"),
                             "destination": route_data.get("destination"),
                         }
-                        flight_info_cache[callsign] = {"cached_at": time.monotonic(), "payload": route}
+                        write_cache("flight_info", callsign, json.dumps(route), FLIGHT_INFO_CACHE_TTL)
             except (requests.RequestException, ValueError):
                 app.logger.warning("Nearest flight info unavailable for %s", callsign)
 
@@ -421,6 +504,21 @@ def silhouette(aircraft_type):
     if content is None:
         return jsonify({"error": "Silhouette not found."}), 404
     return Response(content, mimetype="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/api/airline-logo/<airline_icao>")
+def airline_logo(airline_icao):
+    normalized_icao = airline_icao.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{2,4}", normalized_icao):
+        return jsonify({"error": "Invalid airline ICAO."}), 400
+    found, content = read_cache(AIRLINE_LOGO_CACHE_NAMESPACE, normalized_icao)
+    if not found or not content:
+        return jsonify({"error": "Airline logo not found."}), 404
+    return Response(
+        content,
+        mimetype="image/png",
+        headers={"Cache-Control": "public, max-age=604800"},
+    )
 
 
 @app.get("/api/location")

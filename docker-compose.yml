@@ -1,7 +1,10 @@
+# PlaneRadar: https://github.com/lhsluis/PlaneRadar
+# Airline Logo API: https://airline.logostream.dev/pricing (free tier)
 services:
   planeradar:
     build: .
     container_name: planeradar
+    user: "1030:65536"
     ports:
       - "5000:5000"
     environment:
@@ -9,6 +12,13 @@ services:
       PLANE_RADAR_LON: "-48.139653"
       PLANE_RADAR_DISTANCE: "25"
       PLANE_RADAR_POLLING: "10"
-      PLANE_RADAR_AIRLINE_LOGO_API_KEY: "DUMMY-AIRLINE-LOGO-API-KEY" #optional - free tier from https://airline.logostream.dev/pricing
+      PLANE_RADAR_AIRLINE_LOGO_API_KEY: "DUMMY-AIRLINE-LOGO-API-KEY"
+      PLANE_RADAR_CACHE_DB: "/data/planeradar-cache.sqlite3"
       FLASK_PORT: "5000"
+    volumes:
+      - planeradar-data:/data
     restart: unless-stopped
+
+volumes:
+  # Persistent SQLite cache. UID 1030 / GID 65536 needs read/write access.
+  planeradar-data:
