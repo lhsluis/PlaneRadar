@@ -296,9 +296,10 @@ def airline_logo_url(route):
     icao = str(airline.get("icao", "")).strip().upper() if isinstance(airline, dict) else ""
     if not re.fullmatch(r"[A-Z0-9]{2,4}", icao):
         return None
-    found, _cached = read_cache(AIRLINE_LOGO_CACHE_NAMESPACE, icao)
+    cache_icao = "TVF" if icao == "TRA" else icao
+    found, _cached = read_cache(AIRLINE_LOGO_CACHE_NAMESPACE, cache_icao)
     if found:
-        return url_for("airline_logo", airline_icao=icao, _external=True)
+        return url_for("airline_logo", airline_icao=cache_icao, _external=True)
 
     logostream_icao = "TVF" if icao == "TRA" else icao
     logo_url = (
@@ -319,8 +320,8 @@ def airline_logo_url(route):
         app.logger.warning("Airline logo lookup failed for %s: %s", icao, error)
         return None
 
-    write_cache(AIRLINE_LOGO_CACHE_NAMESPACE, icao, content, AIRLINE_LOGO_CACHE_TTL)
-    return url_for("airline_logo", airline_icao=icao, _external=True)
+    write_cache(AIRLINE_LOGO_CACHE_NAMESPACE, cache_icao, content, AIRLINE_LOGO_CACHE_TTL)
+    return url_for("airline_logo", airline_icao=cache_icao, _external=True)
 
 
 def airline_logo_small_url(route):
@@ -329,7 +330,8 @@ def airline_logo_small_url(route):
         return None
     airline = route.get("airline") if route else None
     icao = str(airline.get("icao", "")).strip().upper() if isinstance(airline, dict) else ""
-    return url_for("airline_logo", airline_icao=icao, size=64, _external=True)
+    cache_icao = "TVF" if icao == "TRA" else icao
+    return url_for("airline_logo", airline_icao=cache_icao, size=64, _external=True)
 
 
 def startup_settings():
@@ -646,6 +648,7 @@ def airline_logo(airline_icao):
     normalized_icao = airline_icao.strip().upper()
     if not re.fullmatch(r"[A-Z0-9]{2,4}", normalized_icao):
         return jsonify({"error": "Invalid airline ICAO."}), 400
+    normalized_icao = "TVF" if normalized_icao == "TRA" else normalized_icao
     if "size" in request.args:
         try:
             size = parse_image_size()

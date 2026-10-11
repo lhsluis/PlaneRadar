@@ -85,7 +85,9 @@ class ImageApiTests(unittest.TestCase):
     @patch("app.write_cache")
     @patch("app.read_cache", return_value=(False, None))
     @patch("app.requests.get")
-    def test_tra_uses_tvf_for_logostream_lookup(self, requests_get, _read_cache, _write_cache):
+    def test_tra_uses_tvf_for_logostream_lookup_cache_and_urls(
+        self, requests_get, _read_cache, _write_cache
+    ):
         response = Mock()
         response.content = b"logo"
         response.raise_for_status.return_value = None
@@ -96,7 +98,11 @@ class ImageApiTests(unittest.TestCase):
 
         self.assertIn("/icao/TVF?", requests_get.call_args.args[0])
         self.assertNotIn("/icao/TRA?", requests_get.call_args.args[0])
-        self.assertIn("/api/airline-logo/TRA", result)
+        self.assertIn("/api/airline-logo/TVF", result)
+        self.assertEqual(_write_cache.call_args.args[1], "TVF")
+        with app.test_request_context("/"):
+            small_result = app_module.airline_logo_small_url({"airline": {"icao": "TRA"}})
+        self.assertIn("/api/airline-logo/TVF?size=64", small_result)
 
     @patch("app.reverse_geocode", return_value={})
     @patch("app.request_adsb")
