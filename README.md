@@ -147,7 +147,7 @@ POST /api/presence
 - `/api/aircraft` consulta o endpoint v3 do adsb.fi. O backend reserva os slots das consultas com intervalo mínimo de 2 segundos, evitando colisões quando várias sessões estão abertas ao mesmo tempo.
 - `/api/nearest-aircraft` retorna a aeronave mais próxima, todos os dados ADS-B exibidos nas tabelas, o enriquecimento de companhia/rota em `flight_info`, os links da silhueta em `silhouette` e do logo da companhia em `airline_logo`, além de `location` com cidade, subdivisão principal e país. `silhouette` é `null` quando o tipo da aeronave não possui arquivo correspondente. O logo é buscado na Logostream somente quando não está no cache SQLite e servido pelo endpoint interno `/api/airline-logo/{icao}`.
 - `/api/nearest-aircraft` também retorna `silhouette_png` e `airline_logo_small`, URLs HTTPS/HTTP completas para as variantes PNG de 64 pixels. Essas URLs respeitam `X-Forwarded-Proto` e `X-Forwarded-Host` quando a aplicação está atrás de um proxy reverso.
-- `/api/silhouette/{tipo}?format=png&size={pixels}` retorna PNG RGBA 8-bit, não entrelaçado, com fundo transparente e silhueta preta. `size` varia de 16 a 256 e o padrão é 64. O SVG é rasterizado com resvg, normalizado com Pillow e cada variante é persistida no cache SQLite; assim, SVGs com imagens embutidas ou muitos nós são processados uma única vez e não a cada download.
+- `/api/silhouette/{tipo}?format=png&size={pixels}` retorna PNG RGBA 8-bit, não entrelaçado, com fundo transparente e silhueta preta. `size` varia de 16 a 256 e o padrão é 64. O SVG é rasterizado com resvg usando a transformação compatível com o renderer, convertido para preto transparente com antialiasing por Pillow e cada variante é persistida no cache SQLite; assim, SVGs com imagens embutidas ou muitos nós são processados uma única vez e não a cada download.
 - `/api/airline-logo/{icao}?size={pixels}` retorna a versão PNG RGBA 8-bit redimensionada, preservando a transparência original. Sem `size`, o endpoint continua entregando o PNG original. As variantes são persistidas no cache SQLite.
 - `/api/flight-info` consulta o ADSBdb pelo callsign retornado pela API ADS-B e mantém cache no servidor por 15 minutos; em Docker, o cache é persistido no SQLite do volume `planeradar-data`.
 - `/api/location` consulta o reverse geocoding da API BDC. A consulta ocorre no carregamento e quando latitude, longitude ou idioma mudam, não a cada refresh de aeronaves.
@@ -167,7 +167,7 @@ curl -s -o /tmp/logo.png -D - "https://HOST/api/airline-logo/TST?size=64"
 file /tmp/logo.png
 ```
 
-O `file` deve indicar PNG RGBA 8-bit não entrelaçado, com o lado maior de até 64 pixels. Os testes automatizados podem ser executados com `python -m unittest discover -s tests`.
+O `file` deve indicar PNG RGBA 8-bit não entrelaçado, com o lado maior de até 64 pixels. As dependências `resvg`, `affine` e `Pillow` são usadas para produzir esse formato compatível com o decodificador limitado do ESP32-S3. Os testes automatizados podem ser executados com `python -m unittest discover -s tests`.
 
 ## Uso das APIs externas
 
@@ -178,6 +178,8 @@ O endpoint público do adsb.fi possui limite de uma requisição por segundo e �
 ```text
 app.py
 requirements.txt
+tests/
+  test_image_api.py
 templates/
   index.html
   mobile.html

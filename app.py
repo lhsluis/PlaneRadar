@@ -139,7 +139,9 @@ def resize_png(content, size, silhouette_image=False):
         image = image.convert("RGBA")
         image.thumbnail((size, size), Image.Resampling.LANCZOS)
         if silhouette_image:
-            alpha = image.getchannel("A")
+            rgb = image.convert("RGB")
+            luminance = rgb.convert("L")
+            alpha = luminance.point(lambda value: 255 - value)
             image = Image.new("RGBA", image.size, (0, 0, 0, 0))
             image.putalpha(alpha)
         output = io.BytesIO()
@@ -156,8 +158,15 @@ def silhouette_png(aircraft_type, size):
     if source is None:
         return None
     try:
-        tree = usvg.Tree.from_str(source.decode("utf-8"), usvg.Options.default())
-        rasterized = render_svg(tree, (1, 0, 0, 1, 0, 0))
+        svg = source.decode("utf-8")
+        svg = re.sub(r"(?i)(fill\s*:\s*)(?:#fff(?:fff)?|white)\b", r"\1#000000", svg)
+        svg = re.sub(r"(?i)(fill\s*=\s*[\"'])(?:#fff(?:fff)?|white)([\"'])", r"\1#000000\2", svg)
+        tree = usvg.Tree.from_str(svg, usvg.Options.default())
+        rasterized = render_svg(
+            tree,
+            (1, 0, 0, 0, 1, 0),
+            bg_color=(255, 255, 255, 255),
+        )
         content = resize_png(rasterized, size, silhouette_image=True)
     except (OSError, UnicodeDecodeError, ValueError, RuntimeError) as error:
         app.logger.warning("Silhouette rasterization failed for %s: %s", aircraft_type, error)

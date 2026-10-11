@@ -37,7 +37,7 @@ class ImageApiTests(unittest.TestCase):
     def test_silhouette_png_is_rgba_non_interlaced_and_cached(self, get_silhouette):
         get_silhouette.return_value = (
             b'<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">'
-            b'<rect width="200" height="100" fill="red"/></svg>'
+            b'<rect width="200" height="100" fill="white"/></svg>'
         )
 
         response = self.client.get("/api/silhouette/A320?format=png&size=64")
@@ -46,6 +46,11 @@ class ImageApiTests(unittest.TestCase):
         self.assertEqual(response.content_type, "image/png")
         self.assertLessEqual(len(response.data), 5 * 1024)
         self.assertEqual(self.png_metadata(response.data), (64, 32, 8, 6, 0))
+        from PIL import Image
+
+        with Image.open(io.BytesIO(response.data)) as image:
+            self.assertEqual(image.getpixel((32, 16)), (0, 0, 0, 255))
+            self.assertEqual(image.getpixel((0, 0)), (0, 0, 0, 255))
         self.assertEqual(response.headers["Content-Length"], str(len(response.data)))
         self.assertEqual(response.headers["Cache-Control"], "public, max-age=31536000")
 
