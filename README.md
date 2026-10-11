@@ -2,6 +2,8 @@
 
 Tracker local de aeronaves próximas usando Python, Flask, Jinja2, JavaScript/CSS vanilla e as APIs públicas [adsb.fi](https://adsb.fi/), [ADSBdb](https://www.adsbdb.com/) e [API BDC](https://api-bdc.io/).
 
+O PlaneRadar também possui um companion para desktop: [PlaneRadarDeskCompanion](https://github.com/lhsluis/PlaneRadarDeskCompanion).
+
 ## Requisitos
 
 - Python 3.10 ou superior
