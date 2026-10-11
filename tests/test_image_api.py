@@ -82,6 +82,22 @@ class ImageApiTests(unittest.TestCase):
         self.assertEqual(self.png_metadata(response.data), (64, 32, 8, 6, 0))
         self.assertLessEqual(len(response.data), 8 * 1024)
 
+    @patch("app.write_cache")
+    @patch("app.read_cache", return_value=(False, None))
+    @patch("app.requests.get")
+    def test_tra_uses_tvf_for_logostream_lookup(self, requests_get, _read_cache, _write_cache):
+        response = Mock()
+        response.content = b"logo"
+        response.raise_for_status.return_value = None
+        requests_get.return_value = response
+
+        with app.test_request_context("/"):
+            result = app_module.airline_logo_url({"airline": {"icao": "TRA"}})
+
+        self.assertIn("/icao/TVF?", requests_get.call_args.args[0])
+        self.assertNotIn("/icao/TRA?", requests_get.call_args.args[0])
+        self.assertIn("/api/airline-logo/TRA", result)
+
     @patch("app.reverse_geocode", return_value={})
     @patch("app.request_adsb")
     def test_nearest_aircraft_includes_small_urls_with_forwarded_host(self, request_adsb, _reverse_geocode):

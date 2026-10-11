@@ -300,10 +300,10 @@ def airline_logo_url(route):
     if found:
         return url_for("airline_logo", airline_icao=icao, _external=True)
 
-
+    logostream_icao = "TVF" if icao == "TRA" else icao
     logo_url = (
         "https://airlines-api.logostream.dev/airlines/icao/"
-        f"{requests.utils.quote(icao, safe='')}"
+        f"{requests.utils.quote(logostream_icao, safe='')}"
         f"?key={requests.utils.quote(AIRLINE_LOGO_API_KEY, safe='')}"
         "&variant=tail&format=png&radius=9999&loop=false"
     )
