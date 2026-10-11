@@ -1,4 +1,6 @@
 import argparse
+import hashlib
+import io
 import json
 import os
 import re
@@ -9,9 +11,14 @@ import time
 from datetime import datetime, timezone
 
 import requests
+from PIL import Image
+from resvg import render as render_svg
+from resvg import usvg
+from werkzeug.middleware.proxy_fix import ProxyFix
 from flask import Flask, Response, jsonify, render_template, request, url_for
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 API_BASE_URL = "https://opendata.adsb.fi/api/v3/lat/{lat}/lon/{lon}/dist/{distance}"
 CALLSIGN_API_URL = "https://api.adsbdb.com/v0/callsign/{callsign}"
@@ -32,6 +39,11 @@ FLIGHT_INFO_CACHE_TTL = 900
 SILHOUETTE_CACHE_TTL = 86400
 AIRLINE_LOGO_CACHE_TTL = 604800
 AIRLINE_LOGO_CACHE_NAMESPACE = "airline_logo"
+SILHOUETTE_PNG_CACHE_NAMESPACE = "silhouette_png"
+AIRLINE_LOGO_PNG_CACHE_NAMESPACE = "airline_logo_png"
+PNG_CACHE_TTL = 31536000
+MIN_IMAGE_SIZE = 16
+MAX_IMAGE_SIZE = 256
 cache_lock = threading.Lock()
 adsb_request_lock = threading.Lock()
 presence_lock = threading.Lock()
@@ -96,6 +108,79 @@ def write_cache(namespace, cache_key, payload, ttl):
 
 
 initialize_cache_db()
+
+
+def parse_image_size():
+    raw_size = request.args.get("size", "64")
+    try:
+        size = int(raw_size)
+    except (TypeError, ValueError):
+        raise ValueError("size must be an integer between 16 and 256")
+    if not MIN_IMAGE_SIZE <= size <= MAX_IMAGE_SIZE:
+        raise ValueError("size must be between 16 and 256")
+    return size
+
+
+def png_response(content):
+    etag = hashlib.sha256(content).hexdigest()
+    if request.if_none_match.contains(etag):
+        response = Response(status=304)
+    else:
+        response = Response(content, mimetype="image/png")
+    response.set_etag(etag)
+    response.headers["Content-Length"] = str(len(content))
+    response.headers["Cache-Control"] = "public, max-age=31536000"
+    return response
+
+
+def resize_png(content, size, silhouette_image=False):
+    with Image.open(io.BytesIO(content)) as image:
+        image.load()
+        image = image.convert("RGBA")
+        image.thumbnail((size, size), Image.Resampling.LANCZOS)
+        if silhouette_image:
+            alpha = image.getchannel("A")
+            image = Image.new("RGBA", image.size, (0, 0, 0, 0))
+            image.putalpha(alpha)
+        output = io.BytesIO()
+        image.save(output, format="PNG", optimize=True, compress_level=9)
+        return output.getvalue()
+
+
+def silhouette_png(aircraft_type, size):
+    cache_key = f"{aircraft_type}:{size}"
+    found, cached = read_cache(SILHOUETTE_PNG_CACHE_NAMESPACE, cache_key)
+    if found:
+        return cached
+    source = get_silhouette(aircraft_type)
+    if source is None:
+        return None
+    try:
+        tree = usvg.Tree.from_str(source.decode("utf-8"), usvg.Options.default())
+        rasterized = render_svg(tree, (1, 0, 0, 1, 0, 0))
+        content = resize_png(rasterized, size, silhouette_image=True)
+    except (OSError, UnicodeDecodeError, ValueError, RuntimeError) as error:
+        app.logger.warning("Silhouette rasterization failed for %s: %s", aircraft_type, error)
+        return None
+    write_cache(SILHOUETTE_PNG_CACHE_NAMESPACE, cache_key, content, PNG_CACHE_TTL)
+    return content
+
+
+def airline_logo_png(airline_icao, size):
+    cache_key = f"{airline_icao}:{size}"
+    found, cached = read_cache(AIRLINE_LOGO_PNG_CACHE_NAMESPACE, cache_key)
+    if found:
+        return cached
+    found, source = read_cache(AIRLINE_LOGO_CACHE_NAMESPACE, airline_icao)
+    if not found or not source:
+        return None
+    try:
+        content = resize_png(source, size)
+    except (OSError, ValueError):
+        app.logger.warning("Airline logo rasterization failed for %s", airline_icao)
+        return None
+    write_cache(AIRLINE_LOGO_PNG_CACHE_NAMESPACE, cache_key, content, PNG_CACHE_TTL)
+    return content
 
 
 def request_adsb(url):
@@ -180,6 +265,21 @@ def silhouette_url(aircraft):
     return url_for("silhouette", aircraft_type=aircraft_type, _external=True)
 
 
+def silhouette_png_url(aircraft):
+    aircraft_type = str(aircraft.get("t", "")).strip().upper()
+    if not re.fullmatch(r"[A-Z0-9_-]{2,10}", aircraft_type):
+        return None
+    if get_silhouette(aircraft_type) is None:
+        return None
+    return url_for(
+        "silhouette",
+        aircraft_type=aircraft_type,
+        format="png",
+        size=64,
+        _external=True,
+    )
+
+
 def airline_logo_url(route):
     if not AIRLINE_LOGO_API_KEY:
         return None
@@ -190,6 +290,7 @@ def airline_logo_url(route):
     found, _cached = read_cache(AIRLINE_LOGO_CACHE_NAMESPACE, icao)
     if found:
         return url_for("airline_logo", airline_icao=icao, _external=True)
+
 
     logo_url = (
         "https://airlines-api.logostream.dev/airlines/icao/"
@@ -211,6 +312,15 @@ def airline_logo_url(route):
 
     write_cache(AIRLINE_LOGO_CACHE_NAMESPACE, icao, content, AIRLINE_LOGO_CACHE_TTL)
     return url_for("airline_logo", airline_icao=icao, _external=True)
+
+
+def airline_logo_small_url(route):
+    logo_url = airline_logo_url(route)
+    if logo_url is None:
+        return None
+    airline = route.get("airline") if route else None
+    icao = str(airline.get("icao", "")).strip().upper() if isinstance(airline, dict) else ""
+    return url_for("airline_logo", airline_icao=icao, size=64, _external=True)
 
 
 def startup_settings():
@@ -443,6 +553,8 @@ def nearest_aircraft():
             "flight_info": None,
             "airline_logo": None,
             "silhouette": None,
+            "silhouette_png": None,
+            "airline_logo_small": None,
             "location": location_data,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         })
@@ -479,6 +591,8 @@ def nearest_aircraft():
         "flight_info": route,
         "airline_logo": airline_logo_url(route),
         "silhouette": silhouette_url(nearest),
+        "silhouette_png": silhouette_png_url(nearest),
+        "airline_logo_small": airline_logo_small_url(route),
         "location": location_data,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     })
@@ -500,6 +614,18 @@ def silhouette(aircraft_type):
         normalized_type = normalized_type[:-4]
     if not re.fullmatch(r"[A-Z0-9_-]{2,10}", normalized_type):
         return jsonify({"error": "Invalid aircraft type."}), 400
+    output_format = request.args.get("format", "").lower()
+    if output_format == "png":
+        try:
+            size = parse_image_size()
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        content = silhouette_png(normalized_type, size)
+        if content is None:
+            return jsonify({"error": "Silhouette not found or could not be rasterized."}), 404
+        return png_response(content)
+    if output_format:
+        return jsonify({"error": "format must be png."}), 400
     content = get_silhouette(normalized_type)
     if content is None:
         return jsonify({"error": "Silhouette not found."}), 404
@@ -511,6 +637,15 @@ def airline_logo(airline_icao):
     normalized_icao = airline_icao.strip().upper()
     if not re.fullmatch(r"[A-Z0-9]{2,4}", normalized_icao):
         return jsonify({"error": "Invalid airline ICAO."}), 400
+    if "size" in request.args:
+        try:
+            size = parse_image_size()
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        content = airline_logo_png(normalized_icao, size)
+        if content is None:
+            return jsonify({"error": "Airline logo not found or could not be rasterized."}), 404
+        return png_response(content)
     found, content = read_cache(AIRLINE_LOGO_CACHE_NAMESPACE, normalized_icao)
     if not found or not content:
         return jsonify({"error": "Airline logo not found."}), 404
