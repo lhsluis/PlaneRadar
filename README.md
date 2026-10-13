@@ -159,14 +159,14 @@ POST /api/presence
 O polling ocorre no navegador, portanto o servidor não consulta as APIs quando não há páginas abertas.
 O contador de usuários considera ativos os navegadores que enviaram heartbeat nos últimos 45 segundos. O identificador é anônimo e não armazena endereço IP. Como o contador fica em memória, em deployments com múltiplos workers ou réplicas ele deve ser movido para um armazenamento compartilhado.
 
-O caminho do banco de cache pode ser alterado com `PLANE_RADAR_CACHE_DB`. O cache de informações de voo expira em 15 minutos, o cache de silhuetas expira em 24 horas e o cache de logos expira em 7 dias. O contador de presença e o limitador de requisições ao adsb.fi continuam em memória por representarem estado temporário do processo.
+O caminho do banco de cache pode ser alterado com `PLANE_RADAR_CACHE_DB`. O cache de informações de voo expira em 15 minutos, o cache de silhuetas expira em 3 dias e o cache de logos expira em 10 dias. O contador de presença e o limitador de requisições ao adsb.fi continuam em memória por representarem estado temporário do processo.
 
 As variantes PNG usam `Cache-Control: public, max-age=31536000`, `Content-Length` e `ETag`. Quando o cliente envia `If-None-Match` com o ETag vigente, a API responde `304`. Essas respostas não usam compressão HTTP nem transferência chunked, para serem compatíveis com o ESP32-S3. Exemplos de verificação:
 
 ```bash
 curl -s -o /tmp/a320.png -D - "https://HOST/api/silhouette/A320?format=png&size=64"
 file /tmp/a320.png
-curl -s -o /tmp/logo.png -D - "https://HOST/api/airline-logo/TST?size=64"
+curl -s -o /tmp/logo.png -D - "https://HOST/api/airline-logo/AZU?size=64"
 file /tmp/logo.png
 ```
 
