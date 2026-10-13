@@ -11,6 +11,7 @@ os.environ["PLANE_RADAR_CACHE_DB"] = os.path.join(cache_directory, "cache.sqlite
 from app import (
     AIRLINE_LOGO_CACHE_NAMESPACE,
     FLIGHT_INFO_CACHE_TTL,
+    SILHOUETTE_PNG_CACHE_NAMESPACE,
     app,
     write_cache,
 )
@@ -24,6 +25,9 @@ class ImageApiTests(unittest.TestCase):
 
     def setUp(self):
         app_module.AIRLINE_LOGO_API_KEY = "test-key"
+
+    def test_silhouette_png_cache_namespace_is_versioned(self):
+        self.assertEqual(SILHOUETTE_PNG_CACHE_NAMESPACE, "silhouette_png_v2")
 
     @staticmethod
     def png_metadata(content):

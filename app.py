@@ -39,7 +39,7 @@ FLIGHT_INFO_CACHE_TTL = 900
 SILHOUETTE_CACHE_TTL = 86400
 AIRLINE_LOGO_CACHE_TTL = 604800
 AIRLINE_LOGO_CACHE_NAMESPACE = "airline_logo"
-SILHOUETTE_PNG_CACHE_NAMESPACE = "silhouette_png"
+SILHOUETTE_PNG_CACHE_NAMESPACE = "silhouette_png_v2"
 AIRLINE_LOGO_PNG_CACHE_NAMESPACE = "airline_logo_png"
 PNG_CACHE_TTL = 31536000
 MIN_IMAGE_SIZE = 16
@@ -144,6 +144,8 @@ def resize_png(content, size, silhouette_image=False):
             alpha = luminance.point(lambda value: 255 - value)
             image = Image.new("RGBA", image.size, (0, 0, 0, 0))
             image.putalpha(alpha)
+            if image.getchannel("A").getbbox() is None:
+                raise ValueError("rasterized silhouette has no visible pixels")
         output = io.BytesIO()
         image.save(output, format="PNG", optimize=True, compress_level=9)
         return output.getvalue()
