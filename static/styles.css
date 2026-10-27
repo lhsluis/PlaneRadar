@@ -20,6 +20,7 @@ body {
   color: var(--text);
   background: radial-gradient(circle at 70% -20%, #143744 0, var(--bg) 43%);
   font-family: "Space Grotesk", sans-serif;
+  padding-top: env(safe-area-inset-top);
 }
 .app-shell { max-width: 1320px; margin: auto; padding: 34px 28px 22px; }
 .topbar, .panel-title, .controls, .connection-status, .topbar-actions, form { display: flex; align-items: center; }

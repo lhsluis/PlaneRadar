@@ -8,3 +8,6 @@ __pycache__/
 htmlcov/
 .claude/
 CLAUDE.md
+
+# Configuração local do NAS (segredos e caminhos específicos)
+.env

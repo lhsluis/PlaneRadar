@@ -1,0 +1,30 @@
+name: planeradar
+
+services:
+  planeradar:
+    build: .
+    user: "1030:65536"
+    # Publicado só em localhost: o reverse proxy HTTPS do DSM encaminha para esta porta.
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-5000}:5000"
+    environment:
+      TZ: America/Sao_Paulo
+      PLANE_RADAR_LAT: "${PLANE_RADAR_LAT:--21.805684}"
+      PLANE_RADAR_LON: "${PLANE_RADAR_LON:--48.139653}"
+      PLANE_RADAR_DISTANCE: "${PLANE_RADAR_DISTANCE:-25}"
+      PLANE_RADAR_POLLING: "${PLANE_RADAR_POLLING:-10}"
+      PLANE_RADAR_AIRLINE_LOGO_API_KEY: "${PLANE_RADAR_AIRLINE_LOGO_API_KEY:-}"
+      PLANE_RADAR_CACHE_DB: "/data/planeradar-cache.sqlite3"
+    volumes:
+      # Pasta do host precisa ser de propriedade 1030:65536 (ver docs/deploy-synology.md).
+      - "${DATA_DIR:-./data}:/data"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/healthz', timeout=3)"]
+      interval: 30s
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped

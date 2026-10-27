@@ -77,6 +77,10 @@ python app.py
 
 ## Deploy com Docker e Gunicorn
 
+Para o Synology NAS (com `docker-compose.synology.yml`, reverse proxy HTTPS do DSM e script de deploy), veja [docs/deploy-synology.md](docs/deploy-synology.md).
+
+O endpoint `/healthz` responde `200 ok` sem chamar APIs externas e é usado pelo healthcheck do container.
+
 O projeto inclui `Dockerfile` e `docker-compose.yml`. Para iniciar em produção:
 
 ```powershell
@@ -133,6 +137,20 @@ As duas interfaces oferecem:
 
 Na página desktop, clicar em uma aeronave fixa o rastreamento nela. Sem seleção manual, a aeronave mais próxima do centro é rastreada.
 
+## Instalar como app (PWA)
+
+As duas interfaces são um PWA instalável:
+
+- Manifest em `/manifest.webmanifest` (`standalone`, cores `#071018`, ícones `any` e `maskable` em `static/icons/`).
+- Service worker em `/sw.js` (escopo `/`): navegação com rede primeiro e fallback para a última página em cache; `/static/` com cache primeiro; APIs e dados ao vivo nunca são cacheados.
+- Ícone de iOS em `static/icons/apple-touch-icon.png` e metas `apple-mobile-web-app-*`. A barra de status é `black-translucent`, com `viewport-fit=cover` e `env(safe-area-inset-top)` no `body`.
+- Android (Chrome): menu do navegador → “Instalar app” / “Adicionar à tela inicial”.
+- iOS (Safari): botão Compartilhar → “Adicionar à Tela de Início”.
+- A instalação e o service worker exigem contexto seguro (HTTPS ou localhost). Em HTTP puro numa rede local, o app roda normalmente, mas não é instalável.
+- Ao alterar arquivos de `static/`, atualize o parâmetro `v=` nos templates (cache-busting), pois o cache do service worker é “primeiro”.
+
+Os ícones foram gerados a partir de `static/logo.png` com 20% de margem sobre o fundo `#071018`.
+
 ## APIs internas
 
 ```text
@@ -185,11 +203,15 @@ tests/
   test_hardening.py
   test_image_api.py
   test_performance.py
+  test_pwa.py
 templates/
   index.html
   mobile.html
 static/
   app.js
   mobile.js
+  pwa.js
   styles.css
+  sw.js
+  icons/
 ```

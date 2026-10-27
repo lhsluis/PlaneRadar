@@ -51,6 +51,20 @@ ADSB_PAYLOAD_CACHE_TTL = 2
 REVERSE_GEOCODE_CACHE_NAMESPACE = "reverse_geocode"
 REVERSE_GEOCODE_CACHE_TTL = 86400
 SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+PWA_MANIFEST = {
+    "name": "PlaneRadar",
+    "short_name": "PlaneRadar",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "background_color": "#071018",
+    "theme_color": "#071018",
+    "icons": [
+        {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+        {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+        {"src": "/static/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+    ],
+}
 cache_lock = threading.Lock()
 cache_db_local = threading.local()
 adsb_request_lock = threading.Lock()
@@ -547,6 +561,30 @@ def mobile():
             "polling": DEFAULT_POLLING,
         },
     )
+
+
+@app.get("/manifest.webmanifest")
+def web_manifest():
+    return Response(
+        json.dumps(PWA_MANIFEST),
+        mimetype="application/manifest+json",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/sw.js")
+def service_worker():
+    with open(os.path.join(app.static_folder, "sw.js"), "rb") as source:
+        content = source.read()
+    response = Response(content, mimetype="application/javascript")
+    response.headers["Service-Worker-Allowed"] = "/"
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.get("/healthz")
+def healthz():
+    return Response("ok", mimetype="text/plain", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/flight-info")

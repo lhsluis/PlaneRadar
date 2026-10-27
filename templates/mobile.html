@@ -2,10 +2,17 @@
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>PlaneRadar · Mobile</title>
     <link rel="icon" href="{{ url_for('static', filename='logo.ico') }}" type="image/x-icon">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20261010-11') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20261027-01') }}">
+    <meta name="theme-color" content="#071018">
+    <link rel="manifest" href="{{ url_for('web_manifest') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="PlaneRadar">
   </head>
   <body class="mobile-page">
     <main class="app-shell">
@@ -55,6 +62,7 @@
       <footer><span data-i18n="source">Fonte</span>: <a href="https://adsb.fi/" target="_blank" rel="noreferrer">adsb.fi</a> | <a href="https://www.adsbdb.com/" target="_blank" rel="noreferrer">adsbdb.com</a> <span id="active-users-label" class="active-users" data-i18n-html="activeUsers" aria-live="polite"></span></footer>
     </main>
     <script>window.PLANE_RADAR_DEFAULTS = {{ defaults | tojson }};</script>
+    <script src="{{ url_for('static', filename='pwa.js', v='20261027-01') }}" data-sw-url="{{ url_for('service_worker') }}"></script>
     <script src="{{ url_for('static', filename='mobile.js', v='20261010-06') }}"></script>
   </body>
 </html>
