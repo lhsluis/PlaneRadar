@@ -98,6 +98,7 @@ td { color: #c5d7dc; }.flight-code { color: var(--accent); font: 600 14px "DM Mo
 .active-users strong { color: var(--text); font-weight: 500; }
 .active-users > span { color: var(--accent); }
 @media (max-width: 800px) { .app-shell { padding: 23px 15px; }.controls { align-items: stretch; flex-direction: column; }.controls form { justify-content: flex-start; flex-wrap: wrap; }.dashboard { grid-template-columns: 1fr; }.summary { grid-template-columns: repeat(3, 1fr); }.metric { padding: 15px; }.metric strong { font-size: 28px; } }
+@media (max-width: 800px) { .topbar { align-items: flex-start; gap: 12px; } .topbar-actions { align-items: flex-end; flex-direction: column; gap: 8px; } }
 @media (max-width: 500px) { .summary { grid-template-columns: 1fr; }.panel-title { align-items: flex-start; flex-direction: column; gap: 8px; } input { width: 125px; } }
 @media (max-width: 600px) {
   .flights { padding: 16px 12px; }
