@@ -128,7 +128,7 @@ As duas interfaces oferecem:
 - Polling configurável no início do servidor.
 - Dados de companhia aérea, origem e destino por callsign.
 - Silhueta da aeronave rastreada usando o código `t` e os SVGs do repositório [pw-silhouettes](https://github.com/plane-watch/pw-silhouettes).
-- Silhuetas são servidas por `/api/silhouette/{t}` (com ou sem sufixo `.svg`) e ficam em cache no servidor, inclusive tipos inexistentes, para evitar consultas repetidas ao GitHub. Em Docker, esse cache é persistido no SQLite do volume `planeradar-data`.
+- Silhuetas são servidas por `/api/silhouette/{t}` (com ou sem sufixo `.svg`) e ficam em cache no servidor, inclusive tipos inexistentes, para evitar consultas repetidas ao GitHub. Em Docker, esse cache é persistido no SQLite do volume `planeradar-data`. O SVG é servido com `Content-Security-Policy` restritiva e `X-Content-Type-Options: nosniff`.
 - Contagem anônima de sessões ativas no footer, atualizada por heartbeat e exibida como “sessões olhando lá pra cima!” ou “sessions looking up there!”.
 
 Na página desktop, clicar em uma aeronave fixa o rastreamento nela. Sem seleção manual, a aeronave mais próxima do centro é rastreada.
@@ -146,20 +146,20 @@ GET /api/location?lat={lat}&lon={lon}&localityLanguage={pt|en}
 POST /api/presence
 ```
 
-- `/api/aircraft` consulta o endpoint v3 do adsb.fi. O backend reserva os slots das consultas com intervalo mínimo de 2 segundos, evitando colisões quando várias sessões estão abertas ao mesmo tempo.
+- `/api/aircraft` consulta o endpoint v3 do adsb.fi. O backend reserva os slots das consultas com intervalo mínimo de 2 segundos, evitando colisões quando várias sessões estão abertas ao mesmo tempo. A resposta do adsb.fi também fica em cache em memória por 2 segundos para consultas idênticas (mesma latitude, longitude e distância), de modo que sessões na mesma área compartilhem a mesma consulta.
 - `/api/nearest-aircraft` retorna a aeronave mais próxima, todos os dados ADS-B exibidos nas tabelas, o enriquecimento de companhia/rota em `flight_info`, os links da silhueta em `silhouette` e do logo da companhia em `airline_logo`, além de `location` com cidade, subdivisão principal e país. `silhouette` é `null` quando o tipo da aeronave não possui arquivo correspondente. O logo é buscado na Logostream somente quando não está no cache SQLite e servido pelo endpoint interno `/api/airline-logo/{icao}`.
 - `/api/nearest-aircraft` também retorna `silhouette_png` e `airline_logo_small`, URLs HTTPS/HTTP completas para as variantes PNG de 64 pixels. Essas URLs respeitam `X-Forwarded-Proto` e `X-Forwarded-Host` quando a aplicação está atrás de um proxy reverso.
 - Para a companhia com ICAO `TRA`, o PlaneRadar consulta o Logostream usando `TVF`, grava o logo no cache usando `TVF` e serve os links internos usando o ICAO `TVF`.
 - `/api/silhouette/{tipo}?format=png&size={pixels}` retorna PNG RGBA 8-bit, não entrelaçado, com fundo transparente e silhueta preta. `size` varia de 16 a 256 e o padrão é 64. O SVG é rasterizado com resvg usando a transformação compatível com o renderer, convertido para preto transparente com antialiasing por Pillow e cada variante é persistida no cache SQLite; assim, SVGs com imagens embutidas ou muitos nós são processados uma única vez e não a cada download. O namespace do cache é versionado e resultados sem pixels visíveis não são armazenados, evitando que uma variante vazia antiga continue sendo entregue.
 - `/api/airline-logo/{icao}?size={pixels}` retorna a versão PNG RGBA 8-bit redimensionada, preservando a transparência original. Sem `size`, o endpoint continua entregando o PNG original. As variantes são persistidas no cache SQLite.
 - `/api/flight-info` consulta o ADSBdb pelo callsign retornado pela API ADS-B e mantém cache no servidor por 15 minutos; em Docker, o cache é persistido no SQLite do volume `planeradar-data`.
-- `/api/location` consulta o reverse geocoding da API BDC. A consulta ocorre no carregamento e quando latitude, longitude ou idioma mudam, não a cada refresh de aeronaves.
+- `/api/location` consulta o reverse geocoding da API BDC. O resultado é cacheado no SQLite por 1 dia, com a coordenada arredondada a 3 casas decimais e o idioma como chave. `/api/nearest-aircraft` usa o mesmo cache para preencher `location`, então a API BDC só é consultada novamente quando a entrada expira.
 - `/api/presence` registra um identificador anônimo do navegador e retorna a quantidade de sessões ativas.
 
 O polling ocorre no navegador, portanto o servidor não consulta as APIs quando não há páginas abertas.
-O contador de usuários considera ativos os navegadores que enviaram heartbeat nos últimos 45 segundos. O identificador é anônimo e não armazena endereço IP. Como o contador fica em memória, em deployments com múltiplos workers ou réplicas ele deve ser movido para um armazenamento compartilhado.
+O contador de usuários considera ativos os navegadores que enviaram heartbeat nos últimos 45 segundos. O identificador é anônimo e não armazena endereço IP. Como o contador fica em memória, em deployments com múltiplos workers ou réplicas ele deve ser movido para um armazenamento compartilhado. O contador aceita no máximo 5000 sessões simultâneas; novos identificadores são ignorados enquanto o limite estiver atingido.
 
-O caminho do banco de cache pode ser alterado com `PLANE_RADAR_CACHE_DB`. O cache de informações de voo expira em 15 minutos, o cache de silhuetas expira em 3 dias e o cache de logos expira em 10 dias. O contador de presença e o limitador de requisições ao adsb.fi continuam em memória por representarem estado temporário do processo.
+O caminho do banco de cache pode ser alterado com `PLANE_RADAR_CACHE_DB`. O cache de informações de voo expira em 15 minutos, o cache de silhuetas expira em 3 dias, o cache de logos expira em 10 dias e a geocodificação reversa expira em 1 dia. Entradas expiradas são removidas do SQLite periodicamente, no máximo a cada 10 minutos. Downloads de SVG de silhueta e de logo acima de 2 MB são descartados. O contador de presença, o limitador de requisições ao adsb.fi e o cache de 2 segundos das respostas do adsb.fi continuam em memória por representarem estado temporário do processo.
 
 As variantes PNG usam `Cache-Control: public, max-age=31536000`, `Content-Length` e `ETag`. Quando o cliente envia `If-None-Match` com o ETag vigente, a API responde `304`. Essas respostas não usam compressão HTTP nem transferência chunked, para serem compatíveis com o ESP32-S3. Exemplos de verificação:
 
@@ -174,7 +174,7 @@ O `file` deve indicar PNG RGBA 8-bit não entrelaçado, com o lado maior de até
 
 ## Uso das APIs externas
 
-O endpoint público do adsb.fi possui limite de uma requisição por segundo e é destinado a uso pessoal e não comercial. Além do intervalo configurado no navegador, o servidor aplica um intervalo mínimo global de 2 segundos entre o início das consultas ao adsb.fi. A configuração de produção usa um worker Gunicorn para que esse limitador seja compartilhado por todas as threads; ao escalar para múltiplos workers ou réplicas, use um limitador compartilhado externo, como Redis. Consulte os [termos do adsb.fi](https://github.com/adsbfi/opendata/blob/main/README.md), os [termos do ADSBdb](https://www.adsbdb.com/) e as condições dos demais fornecedores antes de publicar ou distribuir a aplicação.
+O endpoint público do adsb.fi possui limite de uma requisição por segundo e é destinado a uso pessoal e não comercial. Além do intervalo configurado no navegador, o servidor aplica um intervalo mínimo global de 2 segundos entre o início das consultas ao adsb.fi. Respostas idênticas do adsb.fi também ficam em cache em memória por 2 segundos, compartilhadas entre sessões na mesma área. A configuração de produção usa um worker Gunicorn para que esse limitador seja compartilhado por todas as threads; ao escalar para múltiplos workers ou réplicas, use um limitador compartilhado externo, como Redis. Consulte os [termos do adsb.fi](https://github.com/adsbfi/opendata/blob/main/README.md), os [termos do ADSBdb](https://www.adsbdb.com/) e as condições dos demais fornecedores antes de publicar ou distribuir a aplicação.
 
 ## Estrutura
 
@@ -182,7 +182,9 @@ O endpoint público do adsb.fi possui limite de uma requisição por segundo e �
 app.py
 requirements.txt
 tests/
+  test_hardening.py
   test_image_api.py
+  test_performance.py
 templates/
   index.html
   mobile.html

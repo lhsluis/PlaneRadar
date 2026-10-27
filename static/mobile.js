@@ -43,6 +43,13 @@ let mobileLocationRequestKey = null;
 const $m = (selector) => document.querySelector(selector);
 const tm = (key) => MOBILE_TRANSLATIONS[mobileLocale][key] || key;
 const number = (value, digits = 0) => Number.isFinite(Number(value)) ? Number(value).toLocaleString(mobileLocale, {maximumFractionDigits: digits}) : "—";
+function escapeHtml(value) {
+  if (value == null) return "";
+  return String(value).replace(/[&<>"']/g, (char) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[char]);
+}
+function safeImageUrl(url) {
+  return /^(\/(?!\/)|https?:\/\/)/.test(String(url || "")) ? url : "";
+}
 function renderActiveUsers(count = "—") {
   const element = $m("#active-users-label");
   if (element) element.innerHTML = tm("activeUsers").replace("{count}", count);
@@ -100,7 +107,7 @@ async function loadMobileLocation() {
 
 function airport(airportData, fallback) {
   if (!airportData) return tm(fallback);
-  return [airportData.iata_code || airportData.icao_code, airportData.name, airportData.municipality, airportData.country_name || airportData.country_iso_name].filter(Boolean).join(" · ");
+  return [airportData.iata_code || airportData.icao_code, airportData.name, airportData.municipality, airportData.country_name || airportData.country_iso_name].filter(Boolean).map(escapeHtml).join(" · ");
 }
 function flightInfo(plane) { return mobileInfo.get(String(plane.flight || "").trim()); }
 function formatMobileFlight(plane) {
@@ -112,7 +119,9 @@ function mobileSilhouette(plane) {
   const source = unavailableSilhouettes.has(typeCode)
     ? GENERIC_SILHOUETTE_URL
     : `${SILHOUETTE_BASE_URL}${encodeURIComponent(typeCode)}`;
-  return `<img class="mobile-flight-silhouette" src="${source}" alt="" loading="lazy" onerror="markSilhouetteUnavailable('${typeCode}', this)">`;
+  const safeSource = safeImageUrl(source);
+  if (!safeSource) return "";
+  return `<img class="mobile-flight-silhouette" src="${escapeHtml(safeSource)}" alt="" loading="lazy" onerror="markSilhouetteUnavailable(${escapeHtml(JSON.stringify(typeCode))}, this)">`;
 }
 function mobileFlightIata(plane) {
   const iata = String(flightInfo(plane)?.callsign_iata || "").trim();
@@ -121,18 +130,18 @@ function mobileFlightIata(plane) {
 function aircraftName(plane) {
   const name = plane.t || tm("unknown");
   return plane.dbFlags === 1
-    ? `${name} <span class="military-badge" title="${tm("militaryAircraft")}">=✪=</span>`
-    : name;
+    ? `${escapeHtml(name)} <span class="military-badge" title="${tm("militaryAircraft")}">=✪=</span>`
+    : escapeHtml(name);
 }
 function renderMobileTable() {
   const list = $m("#mobile-flight-list");
   if (!mobileAircraft.length) { list.innerHTML = `<tr><td colspan="8" class="empty-state">${tm("noAircraft")}</td></tr>`; return; }
   list.innerHTML = mobileAircraft.map((plane) => {
     const info = flightInfo(plane); const airline = info?.airline;
-    return `<tr><td><div class="mobile-flight-cell"><span class="mobile-flight-silhouette-wrap">${mobileSilhouette(plane)}</span><span><span class="flight-code">${formatMobileFlight(plane)}</span>${mobileFlightIata(plane) ? `<span class="flight-iata">${mobileFlightIata(plane)}</span>` : ""}<span class="subtext">${plane.hex || "—"} · ${plane.r || tm("unavailable")}</span></span></div></td>
-      <td>${airline ? `${airline.name || tm("unavailable")}${airline.country ? ` · ${airline.country}` : ""}` : tm("unavailable")}</td>
+    return `<tr><td><div class="mobile-flight-cell"><span class="mobile-flight-silhouette-wrap">${mobileSilhouette(plane)}</span><span><span class="flight-code">${escapeHtml(formatMobileFlight(plane))}</span>${mobileFlightIata(plane) ? `<span class="flight-iata">${escapeHtml(mobileFlightIata(plane))}</span>` : ""}<span class="subtext">${escapeHtml(plane.hex) || "—"} · ${escapeHtml(plane.r) || tm("unavailable")}</span></span></div></td>
+      <td>${airline ? `${escapeHtml(airline.name) || tm("unavailable")}${airline.country ? ` · ${escapeHtml(airline.country)}` : ""}` : tm("unavailable")}</td>
       <td><span class="subtext">${airport(info?.origin, "originUnknown")}</span><span class="subtext">${airport(info?.destination, "destinationUnknown")}</span></td>
-      <td>${aircraftName(plane)}<span class="subtext">${plane.desc || tm("unavailable")}</span></td>
+      <td>${aircraftName(plane)}<span class="subtext">${escapeHtml(plane.desc) || tm("unavailable")}</span></td>
       <td>${plane.alt_baro === "ground" ? tm("onGround") : plane.alt_baro == null ? "—" : `${number(plane.alt_baro)} ft`}</td>
       <td>${plane.gs == null ? "—" : `${number(plane.gs, 1)} kt`}</td><td>${plane.track == null ? "—" : `${number(plane.track)}°`}</td><td>${plane.dst == null ? "—" : `${number(plane.dst, 2)} NM`}</td></tr>`;
   }).join("");

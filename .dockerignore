@@ -8,3 +8,6 @@ README.md
 docker-compose.yml
 .pytest_cache/
 .coverage
+data/
+.claude/
+CLAUDE.md

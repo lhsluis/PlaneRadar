@@ -87,6 +87,13 @@ const unavailableSilhouettes = new Set();
 
 const $ = (selector) => document.querySelector(selector);
 const t = (key) => TRANSLATIONS[locale][key] || TRANSLATIONS["pt-BR"][key] || key;
+function escapeHtml(value) {
+  if (value == null) return "";
+  return String(value).replace(/[&<>"']/g, (char) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[char]);
+}
+function safeImageUrl(url) {
+  return /^(\/(?!\/)|https?:\/\/)/.test(String(url || "")) ? url : "";
+}
 function renderActiveUsers(count = "—") {
   const element = $("#active-users-label");
   if (element) element.innerHTML = t("activeUsers").replace("{count}", count);
@@ -220,7 +227,9 @@ function flightSilhouette(aircraft) {
   const source = unavailableSilhouettes.has(typeCode)
     ? GENERIC_SILHOUETTE_URL
     : `${SILHOUETTE_BASE_URL}${encodeURIComponent(typeCode)}`;
-  return `<span class="flight-silhouette-wrap"><img class="flight-silhouette" src="${source}" alt="" loading="lazy" onerror="markSilhouetteUnavailable('${typeCode}', this)"></span>`;
+  const safeSource = safeImageUrl(source);
+  if (!safeSource) return "";
+  return `<span class="flight-silhouette-wrap"><img class="flight-silhouette" src="${escapeHtml(safeSource)}" alt="" loading="lazy" onerror="markSilhouetteUnavailable(${escapeHtml(JSON.stringify(typeCode))}, this)"></span>`;
 }
 
 function markSilhouetteUnavailable(typeCode, image) {
@@ -241,8 +250,8 @@ function isMilitary(aircraft) {
 function aircraftName(aircraft) {
   const name = aircraft.t || t("unknown");
   return isMilitary(aircraft)
-    ? `${name} <span class="military-badge" title="${t("militaryAircraft")}">=✪=</span>`
-    : name;
+    ? `${escapeHtml(name)} <span class="military-badge" title="${t("militaryAircraft")}">=✪=</span>`
+    : escapeHtml(name);
 }
 
 function aircraftId(aircraft) {
@@ -260,14 +269,14 @@ function locationDetails(airport, fallback) {
   const name = airport.name || "";
   const municipality = airport.municipality || "";
   const country = airport.country_name || airport.country_iso_name || "";
-  return [code, name, municipality, country].filter(Boolean).join(" · ");
+  return [code, name, municipality, country].filter(Boolean).map(escapeHtml).join(" · ");
 }
 
 function airlineDetails(info) {
   const airline = info?.airline;
   if (!airline) return t("unavailable");
   const country = airline.country || airline.country_iso || "";
-  return `${airline.name || t("unavailable")}${country ? ` · ${country}` : ""}`;
+  return `${escapeHtml(airline.name) || t("unavailable")}${country ? ` · ${escapeHtml(country)}` : ""}`;
 }
 
 async function loadTableFlightInfo(aircraft) {
@@ -475,10 +484,10 @@ function renderFlights(aircraft) {
     .sort((a, b) => (a.dst ?? Infinity) - (b.dst ?? Infinity))
     .map((plane) => `
       <tr>
-        <td data-label="${t("flight")}"><div class="flight-cell"><span class="flight-silhouette-container">${flightSilhouette(plane)}</span><span><span class="flight-code">${formatFlight(plane)}</span>${flightIata(plane) ? `<span class="flight-iata">${flightIata(plane)}</span>` : ""}<span class="subtext">${plane.hex || "—"} · ${plane.r || `${t("unavailable")}`}</span></span></div></td>
+        <td data-label="${t("flight")}"><div class="flight-cell"><span class="flight-silhouette-container">${flightSilhouette(plane)}</span><span><span class="flight-code">${escapeHtml(formatFlight(plane))}</span>${flightIata(plane) ? `<span class="flight-iata">${escapeHtml(flightIata(plane))}</span>` : ""}<span class="subtext">${escapeHtml(plane.hex) || "—"} · ${escapeHtml(plane.r) || `${t("unavailable")}`}</span></span></div></td>
         <td data-label="${t("airline")}">${airlineDetails(flightInfoByCallsign.get(String(plane.flight || "").trim()))}</td>
         <td data-label="${t("route")}"><span class="subtext">${locationDetails(flightInfoByCallsign.get(String(plane.flight || "").trim())?.origin, "originUnknown")}</span><span class="subtext">${locationDetails(flightInfoByCallsign.get(String(plane.flight || "").trim())?.destination, "destinationUnknown")}</span></td>
-        <td data-label="${t("aircraft")}">${aircraftName(plane)}<span class="subtext">${plane.desc || `${t("unknown")} ${t("aircraft").toLowerCase()}`}</span></td>
+        <td data-label="${t("aircraft")}">${aircraftName(plane)}<span class="subtext">${escapeHtml(plane.desc) || `${t("unknown")} ${t("aircraft").toLowerCase()}`}</span></td>
         <td data-label="${t("altitude")}">${formatAltitude(plane)}</td>
         <td data-label="${t("speed")}">${plane.gs == null ? "—" : `${formatNumber(plane.gs, 1)} kt`}</td>
         <td data-label="${t("heading")}">${plane.track == null ? "—" : `${formatNumber(plane.track, 0)}°`}</td>

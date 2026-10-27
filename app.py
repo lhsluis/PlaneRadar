@@ -44,19 +44,37 @@ AIRLINE_LOGO_PNG_CACHE_NAMESPACE = "airline_logo_png"
 PNG_CACHE_TTL = 31536000
 MIN_IMAGE_SIZE = 16
 MAX_IMAGE_SIZE = 256
+MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024
+MAX_PRESENCE_IDS = 5000
+CACHE_PURGE_INTERVAL = 600
+ADSB_PAYLOAD_CACHE_TTL = 2
+REVERSE_GEOCODE_CACHE_NAMESPACE = "reverse_geocode"
+REVERSE_GEOCODE_CACHE_TTL = 86400
+SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
 cache_lock = threading.Lock()
+cache_db_local = threading.local()
 adsb_request_lock = threading.Lock()
+adsb_payload_cache_lock = threading.Lock()
 presence_lock = threading.Lock()
 active_presence = {}
+adsb_payload_cache = {}
 last_adsb_request_at = 0.0
+last_cache_purge_at = float("-inf")
 
 
 def open_cache_db():
+    connection = getattr(cache_db_local, "connection", None)
+    if connection is not None and cache_db_local.path == CACHE_DB_PATH:
+        return connection
+    if connection is not None:
+        connection.close()
     cache_directory = os.path.dirname(CACHE_DB_PATH)
     if cache_directory:
         os.makedirs(cache_directory, exist_ok=True)
     connection = sqlite3.connect(CACHE_DB_PATH, timeout=30)
     connection.execute("PRAGMA busy_timeout = 30000")
+    cache_db_local.connection = connection
+    cache_db_local.path = CACHE_DB_PATH
     return connection
 
 
@@ -94,7 +112,12 @@ def read_cache(namespace, cache_key):
 
 
 def write_cache(namespace, cache_key, payload, ttl):
+    global last_cache_purge_at
     with cache_lock, open_cache_db() as connection:
+        monotonic_now = time.monotonic()
+        if monotonic_now - last_cache_purge_at >= CACHE_PURGE_INTERVAL:
+            connection.execute("DELETE FROM cache_entries WHERE expires_at <= ?", (time.time(),))
+            last_cache_purge_at = monotonic_now
         connection.execute(
             """
             INSERT INTO cache_entries (namespace, cache_key, payload, expires_at)
@@ -130,6 +153,7 @@ def png_response(content):
     response.set_etag(etag)
     response.headers["Content-Length"] = str(len(content))
     response.headers["Cache-Control"] = "public, max-age=31536000"
+    response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
 
@@ -210,18 +234,63 @@ def request_adsb(url):
     )
 
 
+def read_adsb_payload_cache(url):
+    now = time.monotonic()
+    with adsb_payload_cache_lock:
+        entry = adsb_payload_cache.get(url)
+        if entry is None:
+            return None
+        expires_at, payload = entry
+        if expires_at <= now:
+            del adsb_payload_cache[url]
+            return None
+        return payload
+
+
+def write_adsb_payload_cache(url, payload):
+    now = time.monotonic()
+    with adsb_payload_cache_lock:
+        for stored_url, (expires_at, _payload) in list(adsb_payload_cache.items()):
+            if expires_at <= now:
+                del adsb_payload_cache[stored_url]
+        adsb_payload_cache[url] = (now + ADSB_PAYLOAD_CACHE_TTL, payload)
+
+
+def fetch_adsb_payload(latitude, longitude, distance):
+    """Return the adsb.fi payload, reusing a short-lived copy for identical queries."""
+    url = API_BASE_URL.format(
+        lat=f"{latitude:.6f}",
+        lon=f"{longitude:.6f}",
+        distance=f"{distance:g}",
+    )
+    cached_payload = read_adsb_payload_cache(url)
+    if cached_payload is not None:
+        return cached_payload
+    response = request_adsb(url)
+    response.raise_for_status()
+    payload = response.json()
+    write_adsb_payload_cache(url, payload)
+    return payload
+
+
 def register_presence(client_id):
     now = time.monotonic()
     with presence_lock:
-        active_presence[client_id] = now
         cutoff = now - PRESENCE_TIMEOUT
         for stored_id, last_seen in list(active_presence.items()):
             if last_seen < cutoff:
                 del active_presence[stored_id]
+        if client_id in active_presence or len(active_presence) < MAX_PRESENCE_IDS:
+            active_presence[client_id] = now
         return len(active_presence)
 
 
 def reverse_geocode(latitude, longitude, locality_language="pt"):
+    cache_key = f"{latitude:.3f}:{longitude:.3f}:{locality_language}"
+    found, cached_payload = read_cache(REVERSE_GEOCODE_CACHE_NAMESPACE, cache_key)
+    if found:
+        return json.loads(cached_payload)
+
     response = requests.get(
         REVERSE_GEOCODE_API_URL,
         params={
@@ -234,13 +303,52 @@ def reverse_geocode(latitude, longitude, locality_language="pt"):
     )
     response.raise_for_status()
     payload = response.json()
-    return {
+    location_data = {
         "city": payload.get("city", ""),
         "principalsubdivision": payload.get(
             "principalSubdivision", payload.get("principalsubdivision", "")
         ),
         "countryname": payload.get("countryName", payload.get("countryname", "")),
     }
+    write_cache(
+        REVERSE_GEOCODE_CACHE_NAMESPACE,
+        cache_key,
+        json.dumps(location_data),
+        REVERSE_GEOCODE_CACHE_TTL,
+    )
+    return location_data
+
+
+def fetch_flight_route(callsign):
+    """Return the route dict for callsign, or None when no route exists.
+
+    Raises requests.RequestException or ValueError when the lookup fails.
+    """
+    found, cached_payload = read_cache("flight_info", callsign)
+    if found:
+        return json.loads(cached_payload)
+
+    response = requests.get(
+        CALLSIGN_API_URL.format(callsign=requests.utils.quote(callsign, safe="")),
+        headers={"User-Agent": "PlaneRadar/1.0"},
+        timeout=REQUEST_TIMEOUT,
+    )
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    route_data = response.json().get("response", {}).get("flightroute")
+    if not route_data:
+        return None
+    route = {
+        "callsign": route_data.get("callsign"),
+        "callsign_icao": route_data.get("callsign_icao"),
+        "callsign_iata": route_data.get("callsign_iata"),
+        "airline": route_data.get("airline"),
+        "origin": route_data.get("origin"),
+        "destination": route_data.get("destination"),
+    }
+    write_cache("flight_info", callsign, json.dumps(route), FLIGHT_INFO_CACHE_TTL)
+    return route
 
 
 def get_silhouette(aircraft_type):
@@ -262,33 +370,30 @@ def get_silhouette(aircraft_type):
     except requests.RequestException as error:
         app.logger.warning("Silhouette lookup failed for %s: %s", aircraft_type, error)
         content = None
+    if content is not None and len(content) > MAX_DOWNLOAD_BYTES:
+        app.logger.warning("Silhouette for %s exceeds %s bytes", aircraft_type, MAX_DOWNLOAD_BYTES)
+        content = None
 
     write_cache("silhouette", aircraft_type, content, SILHOUETTE_CACHE_TTL)
     return content
 
 
-def silhouette_url(aircraft):
+def silhouette_urls(aircraft):
+    """Return (svg_url, png_url) for aircraft, looking up its silhouette only once."""
     aircraft_type = str(aircraft.get("t", "")).strip().upper()
     if not re.fullmatch(r"[A-Z0-9_-]{2,10}", aircraft_type):
-        return None
+        return None, None
     if get_silhouette(aircraft_type) is None:
-        return None
-    return url_for("silhouette", aircraft_type=aircraft_type, _external=True)
-
-
-def silhouette_png_url(aircraft):
-    aircraft_type = str(aircraft.get("t", "")).strip().upper()
-    if not re.fullmatch(r"[A-Z0-9_-]{2,10}", aircraft_type):
-        return None
-    if get_silhouette(aircraft_type) is None:
-        return None
-    return url_for(
+        return None, None
+    svg_url = url_for("silhouette", aircraft_type=aircraft_type, _external=True)
+    png_url = url_for(
         "silhouette",
         aircraft_type=aircraft_type,
         format="png",
         size=64,
         _external=True,
     )
+    return svg_url, png_url
 
 
 def airline_logo_url(route):
@@ -307,33 +412,47 @@ def airline_logo_url(route):
     logo_url = (
         "https://airlines-api.logostream.dev/airlines/icao/"
         f"{requests.utils.quote(logostream_icao, safe='')}"
-        f"?key={requests.utils.quote(AIRLINE_LOGO_API_KEY, safe='')}"
-        "&variant=tail&format=png&radius=9999&loop=false"
+        "?variant=tail&format=png&radius=9999&loop=false"
     )
     try:
         response = requests.get(
             logo_url,
+            params={"key": AIRLINE_LOGO_API_KEY},
             headers={"User-Agent": "PlaneRadar/1.0"},
             timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()
         content = response.content
     except requests.RequestException as error:
-        app.logger.warning("Airline logo lookup failed for %s: %s", icao, error)
+        # Never log the exception itself: its message contains the URL with the API key.
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+        app.logger.warning(
+            "Airline logo lookup failed for %s: %s (HTTP %s)",
+            icao,
+            type(error).__name__,
+            status_code,
+        )
+        return None
+    if len(content) > MAX_DOWNLOAD_BYTES:
+        app.logger.warning("Airline logo for %s exceeds %s bytes", icao, MAX_DOWNLOAD_BYTES)
         return None
 
     write_cache(AIRLINE_LOGO_CACHE_NAMESPACE, cache_icao, content, AIRLINE_LOGO_CACHE_TTL)
     return url_for("airline_logo", airline_icao=cache_icao, _external=True)
 
 
-def airline_logo_small_url(route):
-    logo_url = airline_logo_url(route)
-    if logo_url is None:
-        return None
+def airline_logo_small_link(route):
     airline = route.get("airline") if route else None
     icao = str(airline.get("icao", "")).strip().upper() if isinstance(airline, dict) else ""
     cache_icao = "TVF" if icao == "TRA" else icao
     return url_for("airline_logo", airline_icao=cache_icao, size=64, _external=True)
+
+
+def airline_logo_small_url(route):
+    logo_url = airline_logo_url(route)
+    if logo_url is None:
+        return None
+    return airline_logo_small_link(route)
 
 
 def startup_settings():
@@ -436,26 +555,11 @@ def flight_info():
     if not re.fullmatch(r"[A-Z0-9][A-Z0-9 ._-]{1,15}", callsign):
         return jsonify({"error": "A valid callsign is required."}), 400
 
-    found, cached_payload = read_cache("flight_info", callsign)
-    if found:
-        return jsonify(json.loads(cached_payload))
-
-    url = CALLSIGN_API_URL.format(callsign=requests.utils.quote(callsign, safe=""))
     try:
-        response = requests.get(
-            url,
-            headers={"User-Agent": "PlaneRadar/1.0"},
-            timeout=REQUEST_TIMEOUT,
-        )
-        if response.status_code == 404:
-            return jsonify({"error": "No route information was found for this callsign."}), 404
-        response.raise_for_status()
-        payload = response.json()
-        route = payload.get("response", {}).get("flightroute")
-        if not route:
-            return jsonify({"error": "No route information was found for this callsign."}), 404
-    except requests.HTTPError:
-        app.logger.warning("Flight info service returned HTTP %s", response.status_code)
+        route = fetch_flight_route(callsign)
+    except requests.HTTPError as error:
+        status_code = error.response.status_code if error.response is not None else None
+        app.logger.warning("Flight info service returned HTTP %s", status_code)
         return jsonify({"error": "The flight information service is unavailable."}), 502
     except requests.RequestException as error:
         app.logger.warning("Flight info request failed: %s", error)
@@ -463,16 +567,9 @@ def flight_info():
     except ValueError:
         return jsonify({"error": "The flight information service returned invalid JSON."}), 502
 
-    result = {
-        "callsign": route.get("callsign"),
-        "callsign_icao": route.get("callsign_icao"),
-        "callsign_iata": route.get("callsign_iata"),
-        "airline": route.get("airline"),
-        "origin": route.get("origin"),
-        "destination": route.get("destination"),
-    }
-    write_cache("flight_info", callsign, json.dumps(result), FLIGHT_INFO_CACHE_TTL)
-    return jsonify(result)
+    if route is None:
+        return jsonify({"error": "No route information was found for this callsign."}), 404
+    return jsonify(route)
 
 
 @app.get("/api/aircraft")
@@ -482,15 +579,8 @@ def aircraft():
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
 
-    url = API_BASE_URL.format(
-        lat=f"{latitude:.6f}",
-        lon=f"{longitude:.6f}",
-        distance=f"{distance:g}",
-    )
     try:
-        response = request_adsb(url)
-        response.raise_for_status()
-        payload = response.json()
+        payload = fetch_adsb_payload(latitude, longitude, distance)
     except requests.HTTPError as error:
         status_code = error.response.status_code if error.response is not None else 502
         if status_code == 429:
@@ -529,15 +619,8 @@ def nearest_aircraft():
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
 
-    url = API_BASE_URL.format(
-        lat=f"{latitude:.6f}",
-        lon=f"{longitude:.6f}",
-        distance=f"{distance:g}",
-    )
     try:
-        response = request_adsb(url)
-        response.raise_for_status()
-        payload = response.json()
+        payload = fetch_adsb_payload(latitude, longitude, distance)
     except requests.HTTPError as error:
         status_code = error.response.status_code if error.response is not None else 502
         if status_code == 429:
@@ -574,38 +657,20 @@ def nearest_aircraft():
     callsign = str(nearest.get("flight", "")).strip().upper()
     route = None
     if callsign:
-        found, cached_payload = read_cache("flight_info", callsign)
-        if found:
-            route = json.loads(cached_payload)
-        else:
-            try:
-                route_response = requests.get(
-                    CALLSIGN_API_URL.format(callsign=requests.utils.quote(callsign, safe="")),
-                    headers={"User-Agent": "PlaneRadar/1.0"},
-                    timeout=REQUEST_TIMEOUT,
-                )
-                if route_response.ok:
-                    route_data = route_response.json().get("response", {}).get("flightroute")
-                    if route_data:
-                        route = {
-                            "callsign": route_data.get("callsign"),
-                            "callsign_icao": route_data.get("callsign_icao"),
-                            "callsign_iata": route_data.get("callsign_iata"),
-                            "airline": route_data.get("airline"),
-                            "origin": route_data.get("origin"),
-                            "destination": route_data.get("destination"),
-                        }
-                        write_cache("flight_info", callsign, json.dumps(route), FLIGHT_INFO_CACHE_TTL)
-            except (requests.RequestException, ValueError):
-                app.logger.warning("Nearest flight info unavailable for %s", callsign)
+        try:
+            route = fetch_flight_route(callsign)
+        except (requests.RequestException, ValueError):
+            app.logger.warning("Nearest flight info unavailable for %s", callsign)
 
+    logo_url = airline_logo_url(route)
+    silhouette_svg_url, silhouette_png_url = silhouette_urls(nearest)
     return jsonify({
         "aircraft": nearest,
         "flight_info": route,
-        "airline_logo": airline_logo_url(route),
-        "silhouette": silhouette_url(nearest),
-        "silhouette_png": silhouette_png_url(nearest),
-        "airline_logo_small": airline_logo_small_url(route),
+        "airline_logo": logo_url,
+        "silhouette": silhouette_svg_url,
+        "silhouette_png": silhouette_png_url,
+        "airline_logo_small": airline_logo_small_link(route) if logo_url is not None else None,
         "location": location_data,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     })
@@ -642,7 +707,15 @@ def silhouette(aircraft_type):
     content = get_silhouette(normalized_type)
     if content is None:
         return jsonify({"error": "Silhouette not found."}), 404
-    return Response(content, mimetype="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+    return Response(
+        content,
+        mimetype="image/svg+xml",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY,
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/api/airline-logo/<airline_icao>")
@@ -666,7 +739,7 @@ def airline_logo(airline_icao):
     return Response(
         content,
         mimetype="image/png",
-        headers={"Cache-Control": "public, max-age=604800"},
+        headers={"Cache-Control": "public, max-age=604800", "X-Content-Type-Options": "nosniff"},
     )
 
 
