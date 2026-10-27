@@ -29,7 +29,7 @@ Este guia descreve o deploy do PlaneRadar no Synology usando `docker-compose.syn
 
 4. Suba o projeto, escolhendo uma das opções:
 
-   - **Script de deploy** (recomendado): `sudo python3 deploypipeline.py /volume1/docker/planeradar planeradar`
+   - **Script de deploy** (recomendado): `sudo python3 deploypipeline.py /volume1/docker/planeradar planeradar --skip-backup`
    - **Container Manager**: em *Projeto* > *Criar*, aponte o caminho para `/volume1/docker/planeradar` e selecione `docker-compose.synology.yml`.
 
 5. Configure o reverse proxy HTTPS no DSM: *Painel de Controle* > *Portal de Login* > *Avançado* > *Proxy reverso*, com:
@@ -45,10 +45,10 @@ Dentro da pasta do projeto, rode o mesmo comando do script:
 
 ```bash
 cd /volume1/docker/planeradar
-sudo python3 deploypipeline.py /volume1/docker/planeradar planeradar
+sudo python3 deploypipeline.py /volume1/docker/planeradar planeradar --skip-backup
 ```
 
-O script exige git limpo, faz `git pull`, reconstrói a imagem e reinicia os containers, aguardando ficarem `running` e `healthy` (timeout de 180 s). A opção `--skip-backup` não é necessária: o backup é pulado automaticamente porque o projeto não tem serviço `db`.
+O script exige git limpo, faz `git pull`, reconstrói a imagem e reinicia os containers, aguardando ficarem `running` e `healthy` (timeout de 180 s). Use sempre `--skip-backup`: o projeto não tem serviço `db` e, sem a opção, o script falha no passo de backup.
 
 ## Troubleshooting
 
