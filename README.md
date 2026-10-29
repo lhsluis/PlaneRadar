@@ -174,6 +174,7 @@ GET /api/airline-logo/{icao}
 GET /api/airline-logo/{icao}?size=64
 GET /api/silhouette/{tipo}?format=png&size=64
 GET /api/location?lat={lat}&lon={lon}&localityLanguage={pt|en}
+GET /api/satellite-tile/{z}/{x}/{y}
 POST /api/presence
 ```
 
@@ -186,6 +187,7 @@ POST /api/presence
 - `/api/flight-info` consulta o ADSBdb pelo callsign retornado pela API ADS-B e mantém cache no servidor por 15 minutos; em Docker, o cache é persistido no SQLite do volume `planeradar-data`.
 - `/api/location` consulta o reverse geocoding da API BDC. O resultado é cacheado no SQLite por 1 dia, com a coordenada arredondada a 3 casas decimais e o idioma como chave. `/api/nearest-aircraft` usa o mesmo cache para preencher `location`, então a API BDC só é consultada novamente quando a entrada expira.
 - `/api/presence` registra um identificador anônimo do navegador e retorna a quantidade de sessões ativas.
+- `/api/satellite-tile/{z}/{x}/{y}` faz proxy dos tiles de imagem de satélite do Esri World Imagery (`MapServer/tile/{z}/{y}/{x}`). `z` vai de 0 a 18 e `x` e `y` devem estar entre 0 e 2^z - 1; coordenadas fora da faixa retornam 400. Os tiles são cacheados no SQLite por 30 dias (somente respostas de sucesso), com `Cache-Control: public, max-age=2592000`. O tipo de conteúdo (`image/jpeg` ou `image/png`) é repassado do upstream; 404 do upstream retorna 404 e falhas do upstream retornam 502 em JSON.
 
 O polling ocorre no navegador, portanto o servidor não consulta as APIs quando não há páginas abertas.
 O contador de usuários considera ativos os navegadores que enviaram heartbeat nos últimos 45 segundos. O identificador é anônimo e não armazena endereço IP. Como o contador fica em memória, em deployments com múltiplos workers ou réplicas ele deve ser movido para um armazenamento compartilhado. O contador aceita no máximo 5000 sessões simultâneas; novos identificadores são ignorados enquanto o limite estiver atingido.
@@ -206,6 +208,10 @@ O `file` deve indicar PNG RGBA 8-bit não entrelaçado, com o lado maior de até
 ## Uso das APIs externas
 
 O endpoint público do adsb.fi possui limite de uma requisição por segundo e é destinado a uso pessoal e não comercial. Além do intervalo configurado no navegador, o servidor aplica um intervalo mínimo global de 2 segundos entre o início das consultas ao adsb.fi. Consultas do adsb.fi também ficam em cache em memória por 2 segundos, com coordenadas arredondadas a 3 casas decimais, compartilhadas entre sessões na mesma área. A configuração de produção usa um worker Gunicorn para que esse limitador seja compartilhado por todas as threads; ao escalar para múltiplos workers ou réplicas, use um limitador compartilhado externo, como Redis. Consulte os [termos do adsb.fi](https://github.com/adsbfi/opendata/blob/main/README.md), os [termos do ADSBdb](https://www.adsbdb.com/) e as condições dos demais fornecedores antes de publicar ou distribuir a aplicação.
+
+### Atribuição das imagens de satélite
+
+As imagens de satélite são obtidas do Esri World Imagery e devem ser exibidas com a atribuição "Imagery © Esri, Maxar, Earthstar Geographics". Consulte os termos de uso do Esri ao publicar ou distribuir a aplicação.
 
 ## Estrutura
 

@@ -93,6 +93,13 @@ MAX_DISTANCE_NM = 250
 EARTH_RADIUS_NM = 3440.065
 REVERSE_GEOCODE_CACHE_NAMESPACE = "reverse_geocode"
 REVERSE_GEOCODE_CACHE_TTL = 86400
+SATELLITE_TILE_API_URL = (
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+)
+SATELLITE_TILE_CACHE_NAMESPACE = "satellite_tile"
+SATELLITE_TILE_CACHE_TTL = 2592000
+SATELLITE_TILE_MAX_ZOOM = 18
+SATELLITE_TILE_CONTENT_TYPES = ("image/jpeg", "image/png")
 SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
 HTML_CONTENT_SECURITY_POLICY = "; ".join(
     [
@@ -902,6 +909,71 @@ def airline_logo(airline_icao):
         content,
         mimetype="image/png",
         headers={"Cache-Control": "public, max-age=604800", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+def sniff_tile_content_type(content):
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    return None
+
+
+def fetch_satellite_tile(z, x, y):
+    """Return (status, content, content_type) for a Esri World Imagery tile."""
+    cache_key = f"{z}/{x}/{y}"
+    found, cached = read_cache(SATELLITE_TILE_CACHE_NAMESPACE, cache_key)
+    if found and cached:
+        cached_type = sniff_tile_content_type(cached)
+        if cached_type is not None:
+            return 200, cached, cached_type
+
+    url = SATELLITE_TILE_API_URL.format(z=z, x=x, y=y)
+    try:
+        response = requests.get(
+            url,
+            headers={"User-Agent": "PlaneRadar/1.0"},
+            timeout=REQUEST_TIMEOUT,
+        )
+    except requests.RequestException as error:
+        app.logger.warning("Satellite tile lookup failed for %s: %s", cache_key, error)
+        return 502, None, None
+    if response.status_code == 404:
+        return 404, None, None
+    if not response.ok:
+        app.logger.warning("Satellite tile %s returned HTTP %s", cache_key, response.status_code)
+        return 502, None, None
+    content_type = response.headers.get("Content-Type", "").split(";")[0].strip().lower()
+    if content_type not in SATELLITE_TILE_CONTENT_TYPES:
+        app.logger.warning("Satellite tile %s has unexpected type %s", cache_key, content_type)
+        return 502, None, None
+    content = response.content
+    if not content or len(content) > MAX_DOWNLOAD_BYTES:
+        app.logger.warning("Satellite tile %s is empty or exceeds %s bytes", cache_key, MAX_DOWNLOAD_BYTES)
+        return 502, None, None
+
+    write_cache(SATELLITE_TILE_CACHE_NAMESPACE, cache_key, content, SATELLITE_TILE_CACHE_TTL)
+    return 200, content, content_type
+
+
+@app.get("/api/satellite-tile/<int(signed=True):z>/<int(signed=True):x>/<int(signed=True):y>")
+def satellite_tile(z, x, y):
+    if not 0 <= z <= SATELLITE_TILE_MAX_ZOOM or not (0 <= x < 2**z and 0 <= y < 2**z):
+        return jsonify({"error": "Invalid tile coordinates."}), 400
+    status, content, content_type = fetch_satellite_tile(z, x, y)
+    if status == 404:
+        return jsonify({"error": "Satellite tile not found."}), 404
+    if status != 200:
+        return jsonify({"error": "Satellite tile service unavailable."}), 502
+    return Response(
+        content,
+        status=200,
+        content_type=content_type,
+        headers={
+            "Cache-Control": "public, max-age=2592000",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

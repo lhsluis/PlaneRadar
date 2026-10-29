@@ -11,3 +11,6 @@ CLAUDE.md
 
 # Configuração local do NAS (segredos e caminhos específicos)
 .env
+
+# Script local de inicialização no Windows (fora do git)
+start.ps1

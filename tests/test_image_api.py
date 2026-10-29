@@ -149,5 +149,120 @@ class ImageApiTests(unittest.TestCase):
         )
 
 
+class SatelliteTileApiTests(unittest.TestCase):
+    PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = app.test_client()
+
+    @staticmethod
+    def upstream(status_code=200, content_type="image/png", content=PNG_BYTES):
+        response = Mock()
+        response.status_code = status_code
+        response.ok = 200 <= status_code < 400
+        response.headers = {"Content-Type": content_type}
+        response.content = content
+        return response
+
+    @patch("app.requests.get")
+    def test_tile_is_proxied_with_headers_and_cached(self, requests_get):
+        requests_get.return_value = self.upstream()
+
+        response = self.client.get("/api/satellite-tile/3/1/2")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content_type, "image/png")
+        self.assertEqual(response.data, self.PNG_BYTES)
+        self.assertEqual(response.headers["Cache-Control"], "public, max-age=2592000")
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(requests_get.call_count, 1)
+        self.assertEqual(requests_get.call_args.kwargs["headers"], {"User-Agent": "PlaneRadar/1.0"})
+        self.assertEqual(requests_get.call_args.kwargs["timeout"], app_module.REQUEST_TIMEOUT)
+
+        cached = self.client.get("/api/satellite-tile/3/1/2")
+
+        self.assertEqual(cached.status_code, 200)
+        self.assertEqual(cached.content_type, "image/png")
+        self.assertEqual(cached.data, self.PNG_BYTES)
+        self.assertEqual(requests_get.call_count, 1)
+
+    @patch("app.requests.get")
+    def test_jpeg_tile_keeps_upstream_content_type(self, requests_get):
+        jpeg = b"\xff\xd8\xff\xe0" + b"\x00" * 32
+        requests_get.return_value = self.upstream(content_type="image/jpeg; charset=binary", content=jpeg)
+
+        response = self.client.get("/api/satellite-tile/4/2/3")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content_type, "image/jpeg")
+        self.assertEqual(response.data, jpeg)
+
+    @patch("app.requests.get")
+    def test_out_of_range_coordinates_return_400_without_upstream(self, requests_get):
+        invalid_paths = [
+            "/api/satellite-tile/19/0/0",
+            "/api/satellite-tile/-1/0/0",
+            "/api/satellite-tile/2/4/0",
+            "/api/satellite-tile/2/0/4",
+            "/api/satellite-tile/1/-1/0",
+            "/api/satellite-tile/1/0/-1",
+        ]
+        for path in invalid_paths:
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("error", response.get_json())
+        requests_get.assert_not_called()
+
+    @patch("app.requests.get")
+    def test_upstream_url_puts_y_before_x(self, requests_get):
+        requests_get.return_value = self.upstream()
+
+        response = self.client.get("/api/satellite-tile/5/7/11")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            requests_get.call_args.args[0],
+            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/5/11/7",
+        )
+
+    @patch("app.requests.get")
+    def test_upstream_server_error_returns_502_json(self, requests_get):
+        requests_get.return_value = self.upstream(status_code=500, content_type="text/html", content=b"")
+
+        response = self.client.get("/api/satellite-tile/6/10/20")
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("error", response.get_json())
+        self.assertNotIn("max-age", response.headers.get("Cache-Control", ""))
+
+    @patch("app.requests.get")
+    def test_upstream_network_error_returns_502_json(self, requests_get):
+        requests_get.side_effect = app_module.requests.RequestException("boom")
+
+        response = self.client.get("/api/satellite-tile/6/11/21")
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("error", response.get_json())
+
+    @patch("app.requests.get")
+    def test_upstream_not_found_returns_404(self, requests_get):
+        requests_get.return_value = self.upstream(status_code=404, content_type="text/html", content=b"")
+
+        response = self.client.get("/api/satellite-tile/6/12/22")
+
+        self.assertEqual(response.status_code, 404)
+
+    @patch("app.requests.get")
+    def test_unexpected_content_type_returns_502(self, requests_get):
+        requests_get.return_value = self.upstream(content_type="text/html", content=b"<html></html>")
+
+        response = self.client.get("/api/satellite-tile/6/13/23")
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("error", response.get_json())
+
+
 if __name__ == "__main__":
     unittest.main()

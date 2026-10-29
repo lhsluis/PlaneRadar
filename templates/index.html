@@ -6,7 +6,7 @@
     <meta name="description" content="Live ADS-B flight tracker for your location">
     <title>PlaneRadar</title>
     <link rel="icon" href="{{ url_for('static', filename='logo.ico') }}" type="image/x-icon">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20261027-02') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20261029-01') }}">
     <meta name="theme-color" content="#071018">
     <link rel="manifest" href="{{ url_for('web_manifest') }}">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
@@ -73,9 +73,15 @@
               <p class="eyebrow" data-i18n="airspaceRadar">RADAR DO ESPAÇO AÉREO</p>
               <h2 data-i18n="aircraftNearby">Aeronaves próximas</h2>
             </div>
-            <span class="last-update" id="last-update">Waiting for data</span>
+            <div class="radar-tools">
+              <span class="last-update" id="last-update">Waiting for data</span>
+              <button type="button" id="satellite-toggle" class="radar-toggle" aria-pressed="false" data-i18n="satellite">Satélite</button>
+            </div>
           </div>
           <div class="radar" id="radar" aria-label="Radar view of nearby aircraft">
+            <div id="satellite-layer" class="satellite-layer" hidden>
+              <div id="satellite-map" class="satellite-map"></div>
+            </div>
             <div class="radar-ring ring-outer"></div>
             <div class="radar-ring ring-middle"></div>
             <div class="radar-ring ring-inner"></div>
@@ -97,6 +103,7 @@
               </div>
             </div>
           </div>
+          <p id="satellite-credit" class="satellite-credit" hidden data-i18n="imageryCredit">Imagery © Esri</p>
           <div class="tracked-summary">
             <div id="tracked-silhouette" class="tracked-silhouette" hidden>
               <img id="tracked-silhouette-image" alt="" loading="lazy">
@@ -163,6 +170,6 @@
     </main>
     <script type="application/json" id="plane-radar-defaults">{{ defaults | tojson }}</script>
     <script src="{{ url_for('static', filename='pwa.js', v='20261027-01') }}" data-sw-url="{{ url_for('service_worker') }}"></script>
-    <script src="{{ url_for('static', filename='app.js', v='20261029-01') }}"></script>
+    <script src="{{ url_for('static', filename='app.js', v='20261029-02') }}"></script>
   </body>
 </html>

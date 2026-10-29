@@ -18,6 +18,7 @@ const TRANSLATIONS = {
     unknown: "Desconhecido", onGround: "No solo", unavailable: "indisponível",
     routeUnavailable: "Rota não disponível", originUnknown: "Origem desconhecida", destinationUnknown: "Destino desconhecido", militaryAircraft: "Aeronave militar",
     updated: "Atualizado", now: "agora", footer: "Dados fornecidos por transponders de aeronaves ADS-B. Altitudes em pés e velocidades em nós.",
+    satellite: "Satélite", imageryCredit: "Imagery © Esri",
     radarAriaLabel: "Radar de aeronaves próximas", activeUsers: "<strong>{count}</strong> sessões olhando lá <span>pra cima</span>!",
   },
   "en-US": {
@@ -37,6 +38,7 @@ const TRANSLATIONS = {
     unknown: "Unknown", onGround: "On ground", unavailable: "unavailable",
     routeUnavailable: "Route unavailable", originUnknown: "Unknown origin", destinationUnknown: "Unknown destination", militaryAircraft: "Military aircraft",
     updated: "Updated", now: "now", footer: "Data provided by ADS-B aircraft transponders. Altitudes are in feet, speeds are in knots.",
+    satellite: "Satellite", imageryCredit: "Imagery © Esri",
     radarAriaLabel: "Radar view of nearby aircraft", activeUsers: "<strong>{count}</strong> sessions looking up <span>there</span>!",
   },
 };
@@ -584,6 +586,7 @@ $("#settings-form").addEventListener("submit", (event) => {
   const formData = new FormData(event.currentTarget);
   settings = Object.fromEntries(formData.entries());
   saveSessionSettings(settings);
+  updateSatelliteView();
   loadLocation();
   loadAircraft();
 });
@@ -610,6 +613,151 @@ if (mobileSuggestion && isMobileDevice() && !localStorage.getItem("plane-radar-m
     localStorage.setItem("plane-radar-mobile-dismissed", "1");
   });
 }
+
+/* Satellite background for the radar.
+ * The radar circle spans 2 * 0.44 * width px for dist NM radius (positionOnRadar uses 44%).
+ * We pick the smallest integer Web Mercator zoom whose ground resolution is finer than the
+ * radar needs, then scale the whole tile grid by a fractional CSS scale so it matches exactly. */
+const SATELLITE_STORAGE_KEY = "plane-radar-satellite";
+const SATELLITE_MAX_ZOOM = 18;
+const SATELLITE_RADIUS_RATIO = 0.44;
+const METERS_PER_NM = 1852;
+const EARTH_METERS_PER_PX_ZOOM0 = 156543.03392;
+const TILE_SIZE = 256;
+const satellite = {
+  enabled: readSatellitePreference(),
+  tiles: new Map(),
+};
+
+function readSatellitePreference() {
+  try {
+    return localStorage.getItem(SATELLITE_STORAGE_KEY) === "1";
+  } catch (error) {
+    return false;
+  }
+}
+
+function saveSatellitePreference(enabled) {
+  try {
+    localStorage.setItem(SATELLITE_STORAGE_KEY, enabled ? "1" : "0");
+  } catch (error) {
+    console.warn("Unable to save satellite preference:", error);
+  }
+}
+
+function computeSatelliteView() {
+  const radar = $("#radar");
+  const width = radar.clientWidth;
+  const dist = Number(settings.dist);
+  const lat = Number(settings.lat);
+  const lon = Number(settings.lon);
+  if (!width || !(dist > 0) || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+  // Ground metres that one screen pixel must cover at this radar scale.
+  const metersPerScreenPx = (dist * METERS_PER_NM / SATELLITE_RADIUS_RATIO) / width;
+  // Web Mercator is only defined up to ~85.05 degrees.
+  const clampedLat = Math.max(-85.0511, Math.min(85.0511, lat));
+  const phi = (clampedLat * Math.PI) / 180;
+  const groundMetersPerPxZ0 = EARTH_METERS_PER_PX_ZOOM0 * Math.cos(phi);
+  const zoom = Math.max(0, Math.min(SATELLITE_MAX_ZOOM,
+    Math.ceil(Math.log2(groundMetersPerPxZ0 / metersPerScreenPx))));
+  const tileMeters = groundMetersPerPxZ0 / 2 ** zoom;
+  // Each tile pixel is drawn at this many screen pixels (<= 1 by construction).
+  const scale = tileMeters / metersPerScreenPx;
+
+  const worldSize = TILE_SIZE * 2 ** zoom;
+  const normalizedLon = ((((lon + 180) % 360) + 360) % 360);
+  const centerX = (normalizedLon / 360) * worldSize;
+  const centerY = ((1 - Math.log(Math.tan(phi) + 1 / Math.cos(phi)) / Math.PI) / 2) * worldSize;
+
+  // Visible half-extent in tile pixels, plus one tile of margin on every side.
+  const halfExtent = width / 2 / scale;
+  return {
+    zoom,
+    scale,
+    centerX,
+    centerY,
+    tileCount: 2 ** zoom,
+    minTx: Math.floor((centerX - halfExtent) / TILE_SIZE) - 1,
+    maxTx: Math.floor((centerX + halfExtent) / TILE_SIZE) + 1,
+    minTy: Math.floor((centerY - halfExtent) / TILE_SIZE) - 1,
+    maxTy: Math.floor((centerY + halfExtent) / TILE_SIZE) + 1,
+  };
+}
+
+function createSatelliteTile(key, zoom, x, y) {
+  const img = document.createElement("img");
+  img.className = "satellite-tile";
+  img.alt = "";
+  img.decoding = "async";
+  img.draggable = false;
+  img.addEventListener("load", () => img.classList.add("is-loaded"), {once: true});
+  img.addEventListener("error", () => {
+    img.remove();
+    if (satellite.tiles.get(key) === img) satellite.tiles.delete(key);
+  }, {once: true});
+  img.src = `/api/satellite-tile/${zoom}/${x}/${y}`;
+  return img;
+}
+
+function clearSatelliteTiles() {
+  satellite.tiles.forEach((img) => img.remove());
+  satellite.tiles.clear();
+}
+
+function updateSatelliteView() {
+  const layer = $("#satellite-layer");
+  const map = $("#satellite-map");
+  const credit = $("#satellite-credit");
+  if (!layer || !map) return;
+  layer.hidden = !satellite.enabled;
+  if (credit) credit.hidden = !satellite.enabled;
+  if (!satellite.enabled) {
+    clearSatelliteTiles();
+    return;
+  }
+  const view = computeSatelliteView();
+  if (!view) return;
+
+  // Container sits at the radar centre; tiles are offset from that centre in tile pixels
+  // and the whole container is scaled, so the radar centre always matches centerX/centerY.
+  map.style.transform = `scale(${view.scale})`;
+
+  const needed = new Set();
+  for (let ty = Math.max(0, view.minTy); ty <= Math.min(view.tileCount - 1, view.maxTy); ty++) {
+    for (let tx = view.minTx; tx <= view.maxTx; tx++) {
+      const key = `${view.zoom}:${tx}:${ty}`;
+      needed.add(key);
+      let img = satellite.tiles.get(key);
+      if (!img) {
+        const wrappedX = ((tx % view.tileCount) + view.tileCount) % view.tileCount;
+        img = createSatelliteTile(key, view.zoom, wrappedX, ty);
+        satellite.tiles.set(key, img);
+        map.appendChild(img);
+      }
+      img.style.left = `${tx * TILE_SIZE - view.centerX}px`;
+      img.style.top = `${ty * TILE_SIZE - view.centerY}px`;
+    }
+  }
+  satellite.tiles.forEach((img, key) => {
+    if (needed.has(key)) return;
+    img.remove();
+    satellite.tiles.delete(key);
+  });
+}
+
+function setSatelliteEnabled(enabled) {
+  satellite.enabled = enabled;
+  saveSatellitePreference(enabled);
+  $("#satellite-toggle").setAttribute("aria-pressed", String(enabled));
+  updateSatelliteView();
+}
+
+$("#satellite-toggle").addEventListener("click", () => setSatelliteEnabled(!satellite.enabled));
+if ("ResizeObserver" in window) {
+  new ResizeObserver(() => updateSatelliteView()).observe($("#radar"));
+}
+$("#satellite-toggle").setAttribute("aria-pressed", String(satellite.enabled));
 
 applyLocale();
 updatePresence();
