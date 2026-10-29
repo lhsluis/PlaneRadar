@@ -138,6 +138,8 @@ adsb_payload_cache_lock = threading.Lock()
 presence_lock = threading.Lock()
 active_presence = {}
 adsb_payload_cache = {}
+adsb_url_locks_guard = threading.Lock()
+adsb_url_locks = {}
 last_adsb_request_at = 0.0
 last_cache_purge_at = float("-inf")
 
@@ -411,11 +413,48 @@ def fetch_adsb_payload(latitude, longitude, distance):
     )
     payload = read_adsb_payload_cache(url)
     if payload is None:
-        response = request_adsb(url)
-        response.raise_for_status()
-        payload = response.json()
-        write_adsb_payload_cache(url, payload)
+        payload = fetch_adsb_payload_single_flight(url)
     return tailor_adsb_payload(payload, latitude, longitude, distance)
+
+
+def retain_adsb_url_lock(url):
+    """Return the per-URL lock entry for ``url``, creating it and counting this user."""
+    with adsb_url_locks_guard:
+        entry = adsb_url_locks.get(url)
+        if entry is None:
+            entry = {"lock": threading.Lock(), "users": 0}
+            adsb_url_locks[url] = entry
+        entry["users"] += 1
+        return entry
+
+
+def release_adsb_url_lock(url, entry):
+    """Drop this user of the per-URL lock and forget the entry once nobody else holds it."""
+    with adsb_url_locks_guard:
+        entry["users"] -= 1
+        if entry["users"] == 0 and adsb_url_locks.get(url) is entry:
+            del adsb_url_locks[url]
+
+
+def fetch_adsb_payload_single_flight(url):
+    """Fetch ``url`` upstream at most once at a time; concurrent waiters reuse the cached result.
+
+    Callers must check the cache first. Inside the per-URL lock the cache is read again, so a
+    waiter that was queued behind a successful fetch uses its result. If the fetch fails, the
+    exception stays with the thread that made it and the next waiter tries again.
+    """
+    entry = retain_adsb_url_lock(url)
+    try:
+        with entry["lock"]:
+            payload = read_adsb_payload_cache(url)
+            if payload is None:
+                response = request_adsb(url)
+                response.raise_for_status()
+                payload = response.json()
+                write_adsb_payload_cache(url, payload)
+            return payload
+    finally:
+        release_adsb_url_lock(url, entry)
 
 
 def register_presence(client_id):

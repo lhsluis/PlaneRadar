@@ -2,6 +2,7 @@ import copy
 import math
 import os
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -206,6 +207,112 @@ class AdsbCoordinateSharingTests(unittest.TestCase):
         cached_payload = app_module.adsb_payload_cache[next(iter(app_module.adsb_payload_cache))][1]
         self.assertEqual(cached_payload, original)
         self.assertEqual(upstream, original)
+
+
+class AdsbSingleFlightTests(unittest.TestCase):
+    def setUp(self):
+        app_module.adsb_payload_cache.clear()
+        app_module.adsb_url_locks.clear()
+        self.addCleanup(app_module.adsb_payload_cache.clear)
+        self.addCleanup(app_module.adsb_url_locks.clear)
+        interval = patch.object(app_module, "ADSB_MIN_REQUEST_INTERVAL", 0)
+        interval.start()
+        self.addCleanup(interval.stop)
+
+    def run_threads(self, calls):
+        """Run fetch_adsb_payload(lat, lon, 25) for each (lat, lon) in its own thread, started together."""
+        barrier = threading.Barrier(len(calls))
+        outcomes = [None] * len(calls)
+
+        def worker(index, latitude, longitude):
+            barrier.wait()
+            try:
+                outcomes[index] = (app_module.fetch_adsb_payload(latitude, longitude, 25), None)
+            except Exception as error:
+                outcomes[index] = (None, error)
+
+        threads = [
+            threading.Thread(target=worker, args=(index, latitude, longitude))
+            for index, (latitude, longitude) in enumerate(calls)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        return outcomes
+
+    @patch("app.request_adsb")
+    def test_concurrent_requests_for_same_url_fetch_upstream_once(self, request_adsb):
+        def slow_upstream(url):
+            time.sleep(0.2)
+            return adsb_response([{"hex": "abc123"}])
+
+        request_adsb.side_effect = slow_upstream
+        # All coordinates round to -21.806 / -48.140, so they share one upstream URL.
+        calls = [(-21.80568 + index * 0.00001, -48.13961) for index in range(5)]
+
+        outcomes = self.run_threads(calls)
+
+        self.assertEqual(request_adsb.call_count, 1)
+        for payload, error in outcomes:
+            self.assertIsNone(error)
+            self.assertEqual([aircraft["hex"] for aircraft in payload["ac"]], ["abc123"])
+        self.assertEqual(app_module.adsb_url_locks, {})
+
+    @patch("app.request_adsb")
+    def test_waiters_retry_when_first_fetch_fails(self, request_adsb):
+        upstream_calls = []
+
+        def flaky_upstream(url):
+            upstream_calls.append(url)
+            if len(upstream_calls) == 1:
+                time.sleep(0.2)
+                raise requests.ConnectionError("upstream down")
+            return adsb_response([{"hex": "abc123"}])
+
+        request_adsb.side_effect = flaky_upstream
+
+        outcomes = self.run_threads([(-21.806, -48.140), (-21.806, -48.140)])
+
+        self.assertEqual(request_adsb.call_count, 2)
+        errors = [error for _payload, error in outcomes if error is not None]
+        successes = [payload for payload, error in outcomes if error is None]
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], requests.ConnectionError)
+        self.assertEqual(len(successes), 1)
+        self.assertEqual([aircraft["hex"] for aircraft in successes[0]["ac"]], ["abc123"])
+        self.assertEqual(app_module.adsb_url_locks, {})
+
+    @patch("app.request_adsb")
+    def test_different_urls_do_not_wait_for_each_other(self, request_adsb):
+        first_entered = threading.Event()
+        second_fetched = threading.Event()
+        first_released = []
+
+        def upstream(url):
+            if "/lat/10.000/" in url:
+                first_entered.set()
+                first_released.append(second_fetched.wait(5))
+            else:
+                second_fetched.set()
+            return adsb_response([])
+
+        request_adsb.side_effect = upstream
+
+        first_thread = threading.Thread(target=app_module.fetch_adsb_payload, args=(10, 20, 25))
+        first_thread.start()
+        self.assertTrue(first_entered.wait(5))
+        second_thread = threading.Thread(target=app_module.fetch_adsb_payload, args=(30, 40, 25))
+        second_thread.start()
+        first_thread.join(10)
+        second_thread.join(10)
+
+        self.assertFalse(first_thread.is_alive())
+        self.assertFalse(second_thread.is_alive())
+        self.assertEqual(first_released, [True])
+        self.assertEqual(request_adsb.call_count, 2)
+        self.assertEqual(app_module.adsb_url_locks, {})
 
 
 class ReverseGeocodeCacheTests(unittest.TestCase):
