@@ -84,6 +84,9 @@ let locationInfo = null;
 let locationRequestKey = null;
 const flightInfoByCallsign = new Map();
 const flightInfoRequests = new Map();
+const blipPlanes = new Map();
+let radarAircraft = [];
+let flightsRenderPending = false;
 const SILHOUETTE_BASE_URL = "/api/silhouette/";
 const GENERIC_SILHOUETTE_URL = "/static/paperplane.svg";
 const unavailableSilhouettes = new Set();
@@ -290,22 +293,38 @@ function airlineDetails(info) {
   return `${escapeHtml(airline.name) || t("unavailable")}${country ? ` · ${escapeHtml(country)}` : ""}`;
 }
 
+function scheduleFlightsRender() {
+  if (flightsRenderPending) return;
+  flightsRenderPending = true;
+  requestAnimationFrame(() => {
+    flightsRenderPending = false;
+    renderFlights(lastAircraft);
+  });
+}
+
+function requestFlightInfo(callsign) {
+  if (flightInfoByCallsign.has(callsign)) return Promise.resolve(flightInfoByCallsign.get(callsign));
+  if (flightInfoRequests.has(callsign)) return flightInfoRequests.get(callsign);
+  const request = fetch(`/api/flight-info?callsign=${encodeURIComponent(callsign)}`)
+    .then((response) => response.ok ? response.json() : null)
+    .catch(() => null)
+    .then((info) => {
+      if (info) flightInfoByCallsign.set(callsign, info);
+      flightInfoRequests.delete(callsign);
+      return info;
+    });
+  flightInfoRequests.set(callsign, request);
+  return request;
+}
+
 async function loadTableFlightInfo(aircraft) {
   const callsigns = [...new Set(
     aircraft.map((plane) => String(plane.flight || "").trim()).filter(Boolean),
   )];
   await Promise.all(callsigns.map(async (callsign) => {
-    if (flightInfoByCallsign.has(callsign) || flightInfoRequests.has(callsign)) return;
-    const request = fetch(`/api/flight-info?callsign=${encodeURIComponent(callsign)}`)
-      .then((response) => response.ok ? response.json() : null)
-      .catch(() => null)
-      .then((info) => {
-        if (info) flightInfoByCallsign.set(callsign, info);
-        flightInfoRequests.delete(callsign);
-        renderFlights(lastAircraft);
-      });
-    flightInfoRequests.set(callsign, request);
-    await request;
+    if (flightInfoByCallsign.has(callsign)) return;
+    await requestFlightInfo(callsign);
+    scheduleFlightsRender();
   }));
 }
 
@@ -328,16 +347,11 @@ async function loadFlightInfo(aircraft) {
   renderFlightInfo();
   if (!callsign) return;
   const trackedId = aircraftId(aircraft);
-  try {
-    const response = await fetch(`/api/flight-info?callsign=${encodeURIComponent(callsign)}`);
-    if (!response.ok) return;
-    const data = await response.json();
-    if (trackedAircraft && aircraftId(trackedAircraft) === trackedId) {
-      flightInfo = data;
-      renderFlightInfo();
-    }
-  } catch (error) {
-    console.warn("Unable to load flight route information:", error);
+  const data = await requestFlightInfo(callsign);
+  if (!data) return;
+  if (trackedAircraft && aircraftId(trackedAircraft) === trackedId) {
+    flightInfo = data;
+    renderFlightInfo();
   }
 }
 
@@ -363,9 +377,21 @@ function setTrackedAircraft(aircraft) {
   if (aircraftId(trackedAircraft) !== previousId) loadFlightInfo(trackedAircraft);
 }
 
+$("#radar-blips").addEventListener("click", (event) => {
+  const blip = event.target.closest(".blip");
+  if (!blip) return;
+  const plane = blipPlanes.get(blip.dataset.id);
+  if (!plane) return;
+  selectedAircraftId = aircraftId(plane);
+  setTrackedAircraft(plane);
+  renderRadar(radarAircraft);
+});
+
 function renderRadar(aircraft) {
   const layer = $("#radar-blips");
   layer.replaceChildren();
+  radarAircraft = aircraft;
+  blipPlanes.clear();
   aircraft.forEach((plane) => {
     const position = relativePosition(plane);
     if (!position) return;
@@ -382,11 +408,7 @@ function renderRadar(aircraft) {
     blip.style.top = `${y}%`;
     blip.dataset.flight = formatFlight(plane);
     blip.title = `${formatFlight(plane)} · ${formatNumber(distance, 2)} NM`;
-    blip.addEventListener("click", () => {
-      selectedAircraftId = aircraftId(plane);
-      setTrackedAircraft(plane);
-      renderRadar(aircraft);
-    });
+    blipPlanes.set(blip.dataset.id, plane);
     layer.appendChild(blip);
   });
   syncTrackedBlip();

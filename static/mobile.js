@@ -160,11 +160,18 @@ function applyMobileLocale() {
   document.querySelectorAll("[data-i18n-html]").forEach((element) => { element.innerHTML = tm(element.dataset.i18nHtml); });
   $m("#mobile-language-select").value = mobileLocale; renderMobileTable();
 }
-async function enrichMobileFlights(aircraft) {
-  await Promise.all([...new Set(aircraft.map((p) => String(p.flight || "").trim()).filter(Boolean))].map(async (callsign) => {
-    if (mobileInfo.has(callsign)) return;
+const mobileInfoRequests = new Map();
+function fetchMobileInfo(callsign) {
+  if (mobileInfoRequests.has(callsign)) return mobileInfoRequests.get(callsign);
+  const request = (async () => {
     try { const response = await fetch(`/api/flight-info?callsign=${encodeURIComponent(callsign)}`); if (response.ok) mobileInfo.set(callsign, await response.json()); } catch (error) { console.warn("Flight info unavailable", error); }
-  }));
+  })().finally(() => mobileInfoRequests.delete(callsign));
+  mobileInfoRequests.set(callsign, request);
+  return request;
+}
+async function enrichMobileFlights(aircraft) {
+  const pending = [...new Set(aircraft.map((p) => String(p.flight || "").trim()).filter(Boolean))].filter((callsign) => !mobileInfo.has(callsign));
+  await Promise.all(pending.map(fetchMobileInfo));
   renderMobileTable();
 }
 async function loadMobileAircraft() {
