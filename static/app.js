@@ -365,6 +365,7 @@ function renderRadar(aircraft) {
     const y = 50 - Math.cos(radians) * radius;
     const blip = document.createElement("span");
     blip.className = "blip";
+    blip.dataset.id = aircraftId(plane);
     if (aircraftId(plane) === selectedAircraftId) blip.classList.add("selected");
     blip.style.left = `${x}%`;
     blip.style.top = `${y}%`;
@@ -377,6 +378,17 @@ function renderRadar(aircraft) {
     });
     layer.appendChild(blip);
   });
+  syncTrackedBlip();
+}
+
+function syncTrackedBlip() {
+  if (!trackedAircraft || !trackedPosition) return;
+  const id = aircraftId(trackedAircraft);
+  if (!id) return;
+  const blip = [...$("#radar-blips").children].find((element) => element.dataset.id === id);
+  if (!blip) return;
+  blip.style.left = `${trackedPosition.x}%`;
+  blip.style.top = `${trackedPosition.y}%`;
 }
 
 function positionOnRadar(distance, bearing) {
@@ -408,6 +420,7 @@ function renderTrackedAircraft() {
   marker.hidden = false;
   marker.style.left = `${trackedPosition.x}%`;
   marker.style.top = `${trackedPosition.y}%`;
+  syncTrackedBlip();
   if (callsign) callsign.textContent = formatFlight(trackedAircraft);
   if (trackedCaption) trackedCaption.textContent = formatFlight(trackedAircraft);
   if (speedCaption) speedCaption.textContent = formatNumber(trackedAircraft.gs, 1);
