@@ -1,3 +1,5 @@
+import copy
+import math
 import os
 import tempfile
 import time
@@ -98,6 +100,112 @@ class AdsbPayloadCacheTests(unittest.TestCase):
 
         self.assertNotIn(stale_url, app_module.adsb_payload_cache)
         self.assertIn("https://example.invalid/fresh", app_module.adsb_payload_cache)
+
+
+def expected_nm(latitude1, longitude1, latitude2, longitude2):
+    phi1, phi2 = math.radians(latitude1), math.radians(latitude2)
+    delta_phi = phi2 - phi1
+    delta_lambda = math.radians(longitude2 - longitude1)
+    a = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    return 2 * 3440.065 * math.asin(math.sqrt(a))
+
+
+class AdsbCoordinateSharingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.client = app.test_client()
+
+    def setUp(self):
+        app_module.adsb_payload_cache.clear()
+        self.addCleanup(app_module.adsb_payload_cache.clear)
+
+    @patch("app.request_adsb")
+    def test_nearby_coordinates_share_one_upstream_request(self, request_adsb):
+        request_adsb.return_value = adsb_response([])
+
+        first = self.client.get("/api/aircraft?lat=-21.80568&lon=-48.13961&dist=25")
+        second = self.client.get("/api/aircraft?lat=-21.80562&lon=-48.13957&dist=25")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(request_adsb.call_count, 1)
+        self.assertIn("/lat/-21.806/lon/-48.140/dist/25.05", request_adsb.call_args.args[0])
+
+    @patch("app.request_adsb")
+    def test_radius_is_capped_at_maximum_distance(self, request_adsb):
+        request_adsb.return_value = adsb_response([])
+
+        response = self.client.get("/api/aircraft?lat=1&lon=2&dist=250")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("/dist/250", request_adsb.call_args.args[0])
+
+    @patch("app.request_adsb")
+    def test_distance_is_recalculated_from_exact_user_position(self, request_adsb):
+        # Aircraft 0.1 degrees north of both users, so the distance depends on each exact position.
+        aircraft_lat = -21.80568 + 0.1
+        aircraft_lon = -48.13961
+        request_adsb.return_value = adsb_response(
+            [{"hex": "abc123", "lat": aircraft_lat, "lon": aircraft_lon, "dst": 99, "dir": 0}]
+        )
+
+        first = self.client.get("/api/aircraft?lat=-21.80568&lon=-48.13961&dist=25")
+        second = self.client.get("/api/aircraft?lat=-21.80562&lon=-48.13957&dist=25")
+
+        self.assertEqual(request_adsb.call_count, 1)
+        first_aircraft = first.get_json()["aircraft"][0]
+        second_aircraft = second.get_json()["aircraft"][0]
+        self.assertAlmostEqual(
+            first_aircraft["dst"], round(expected_nm(-21.80568, -48.13961, aircraft_lat, aircraft_lon), 3), places=3
+        )
+        self.assertAlmostEqual(
+            second_aircraft["dst"], round(expected_nm(-21.80562, -48.13957, aircraft_lat, aircraft_lon), 3), places=3
+        )
+        self.assertNotEqual(first_aircraft["dst"], second_aircraft["dst"])
+        self.assertAlmostEqual(first_aircraft["dir"], 0, places=1)
+
+    @patch("app.request_adsb")
+    def test_aircraft_outside_original_radius_is_filtered(self, request_adsb):
+        request_adsb.return_value = adsb_response(
+            [
+                {"hex": "inside", "lat": 0.1, "lon": 0.0, "dst": 6.0},
+                {"hex": "outside_margin", "lat": 0.17, "lon": 0.0, "dst": 10.1},
+                {"hex": "no_position", "flight": "NOPOS"},
+            ]
+        )
+
+        response = self.client.get("/api/aircraft?lat=0&lon=0&dist=10")
+
+        hexes = [item["hex"] for item in response.get_json()["aircraft"]]
+        self.assertEqual(hexes, ["inside", "no_position"])
+        self.assertEqual(response.get_json()["total"], 2)
+
+    @patch("app.request_adsb")
+    def test_cached_upstream_payload_is_not_mutated(self, request_adsb):
+        upstream = {
+            "ac": [
+                {"hex": "inside", "lat": 0.1, "lon": 0.0, "dst": 99, "dir": 0},
+                {"hex": "outside", "lat": 0.5, "lon": 0.0, "dst": 98},
+            ],
+            "total": 2,
+            "now": 1,
+        }
+        original = copy.deepcopy(upstream)
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = upstream
+        request_adsb.return_value = response
+
+        first = self.client.get("/api/aircraft?lat=0&lon=0&dist=10")
+        second = self.client.get("/api/aircraft?lat=0.00004&lon=0&dist=10")
+
+        self.assertEqual(request_adsb.call_count, 1)
+        self.assertEqual(first.get_json()["aircraft"][0]["hex"], "inside")
+        self.assertEqual(second.get_json()["aircraft"][0]["hex"], "inside")
+        self.assertEqual(len(second.get_json()["aircraft"]), 1)
+        cached_payload = app_module.adsb_payload_cache[next(iter(app_module.adsb_payload_cache))][1]
+        self.assertEqual(cached_payload, original)
+        self.assertEqual(upstream, original)
 
 
 class ReverseGeocodeCacheTests(unittest.TestCase):

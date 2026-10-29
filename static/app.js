@@ -1,3 +1,4 @@
+window.PLANE_RADAR_DEFAULTS = JSON.parse(document.getElementById("plane-radar-defaults").textContent);
 const POLL_INTERVAL = Number(window.PLANE_RADAR_DEFAULTS.polling) || 10;
 const TRANSLATIONS = {
   "pt-BR": {
@@ -94,9 +95,10 @@ function escapeHtml(value) {
 function safeImageUrl(url) {
   return /^(\/(?!\/)|https?:\/\/)/.test(String(url || "")) ? url : "";
 }
-function renderActiveUsers(count = "—") {
+function renderActiveUsers(count = 0) {
   const element = $("#active-users-label");
-  if (element) element.innerHTML = t("activeUsers").replace("{count}", count);
+  const value = Number.parseInt(count, 10);
+  if (element) element.innerHTML = t("activeUsers").replace("{count}", formatNumber(Number.isFinite(value) ? value : 0));
 }
 
 function getPresenceClientId() {
@@ -118,7 +120,7 @@ async function updatePresence() {
     });
     if (!response.ok) return;
     const data = await response.json();
-    renderActiveUsers(formatNumber(data.active_users));
+    renderActiveUsers(data.active_users);
   } catch (error) {
     console.warn("Unable to update active user count:", error);
   }
@@ -223,20 +225,27 @@ function formatFlight(aircraft) {
 
 function flightSilhouette(aircraft) {
   const typeCode = String(aircraft.t || "").trim().toUpperCase();
-  if (!typeCode) return "";
+  if (!/^[A-Z0-9]{1,10}$/.test(typeCode)) return "";
   const source = unavailableSilhouettes.has(typeCode)
     ? GENERIC_SILHOUETTE_URL
     : `${SILHOUETTE_BASE_URL}${encodeURIComponent(typeCode)}`;
   const safeSource = safeImageUrl(source);
   if (!safeSource) return "";
-  return `<span class="flight-silhouette-wrap"><img class="flight-silhouette" src="${escapeHtml(safeSource)}" alt="" loading="lazy" onerror="markSilhouetteUnavailable(${escapeHtml(JSON.stringify(typeCode))}, this)"></span>`;
+  return `<span class="flight-silhouette-wrap"><img class="flight-silhouette" src="${escapeHtml(safeSource)}" data-type-code="${escapeHtml(typeCode)}" alt="" loading="lazy"></span>`;
 }
 
 function markSilhouetteUnavailable(typeCode, image) {
   unavailableSilhouettes.add(typeCode);
-  image.onerror = null;
+  delete image.dataset.typeCode;
   image.src = GENERIC_SILHOUETTE_URL;
 }
+
+document.addEventListener("error", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLImageElement) || !target.matches("img.flight-silhouette")) return;
+  if (!target.dataset.typeCode || target.getAttribute("src") === GENERIC_SILHOUETTE_URL) return;
+  markSilhouetteUnavailable(target.dataset.typeCode, target);
+}, true);
 
 function flightIata(aircraft) {
   const info = flightInfoByCallsign.get(String(aircraft.flight || "").trim());
@@ -354,7 +363,7 @@ function setTrackedAircraft(aircraft) {
 
 function renderRadar(aircraft) {
   const layer = $("#radar-blips");
-  layer.innerHTML = "";
+  layer.replaceChildren();
   aircraft.forEach((plane) => {
     const position = relativePosition(plane);
     if (!position) return;

@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import sqlite3
@@ -18,7 +19,45 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from flask import Flask, Response, jsonify, render_template, request, url_for
 
 app = Flask(__name__)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+DEFAULT_TRUSTED_PROXIES = 1
+
+
+def read_trusted_proxies():
+    """Return how many reverse proxies are trusted (PLANE_RADAR_TRUSTED_PROXIES)."""
+    raw_value = os.getenv("PLANE_RADAR_TRUSTED_PROXIES", str(DEFAULT_TRUSTED_PROXIES)).strip()
+    try:
+        trusted_proxies = int(raw_value)
+    except ValueError:
+        trusted_proxies = -1
+    if trusted_proxies < 0:
+        app.logger.warning(
+            "Invalid PLANE_RADAR_TRUSTED_PROXIES value %r; using %d.",
+            raw_value,
+            DEFAULT_TRUSTED_PROXIES,
+        )
+        return DEFAULT_TRUSTED_PROXIES
+    return trusted_proxies
+
+
+def apply_proxy_fix(flask_app, trusted_proxies):
+    if trusted_proxies > 0:
+        flask_app.wsgi_app = ProxyFix(
+            flask_app.wsgi_app, x_proto=trusted_proxies, x_host=trusted_proxies
+        )
+
+
+apply_proxy_fix(app, read_trusted_proxies())
+
+
+@app.after_request
+def apply_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(self), camera=(), microphone=()")
+    if response.mimetype == "text/html":
+        response.headers.setdefault("Content-Security-Policy", HTML_CONTENT_SECURITY_POLICY)
+    return response
 
 API_BASE_URL = "https://opendata.adsb.fi/api/v3/lat/{lat}/lon/{lon}/dist/{distance}"
 CALLSIGN_API_URL = "https://api.adsbdb.com/v0/callsign/{callsign}"
@@ -48,9 +87,29 @@ MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024
 MAX_PRESENCE_IDS = 5000
 CACHE_PURGE_INTERVAL = 600
 ADSB_PAYLOAD_CACHE_TTL = 2
+ADSB_COORDINATE_PRECISION = 3
+ADSB_QUERY_MARGIN_NM = 0.05
+MAX_DISTANCE_NM = 250
+EARTH_RADIUS_NM = 3440.065
 REVERSE_GEOCODE_CACHE_NAMESPACE = "reverse_geocode"
 REVERSE_GEOCODE_CACHE_TTL = 86400
 SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+HTML_CONTENT_SECURITY_POLICY = "; ".join(
+    [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' data:",
+        "connect-src 'self'",
+        "manifest-src 'self'",
+        "worker-src 'self'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    ]
+)
 PWA_MANIFEST = {
     "name": "PlaneRadar",
     "short_name": "PlaneRadar",
@@ -270,21 +329,86 @@ def write_adsb_payload_cache(url, payload):
         adsb_payload_cache[url] = (now + ADSB_PAYLOAD_CACHE_TTL, payload)
 
 
-def fetch_adsb_payload(latitude, longitude, distance):
-    """Return the adsb.fi payload, reusing a short-lived copy for identical queries."""
-    url = API_BASE_URL.format(
-        lat=f"{latitude:.6f}",
-        lon=f"{longitude:.6f}",
-        distance=f"{distance:g}",
+def haversine_nm(latitude1, longitude1, latitude2, longitude2):
+    """Great-circle distance in nautical miles between two coordinates."""
+    phi1, phi2 = math.radians(latitude1), math.radians(latitude2)
+    delta_phi = phi2 - phi1
+    delta_lambda = math.radians(longitude2 - longitude1)
+    a = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    return 2 * EARTH_RADIUS_NM * math.asin(min(1.0, math.sqrt(a)))
+
+
+def initial_bearing_deg(latitude1, longitude1, latitude2, longitude2):
+    """Initial great-circle bearing in degrees [0, 360) from the first coordinate to the second."""
+    phi1, phi2 = math.radians(latitude1), math.radians(latitude2)
+    delta_lambda = math.radians(longitude2 - longitude1)
+    x = math.sin(delta_lambda) * math.cos(phi2)
+    y = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(delta_lambda)
+    return (math.degrees(math.atan2(x, y)) + 360) % 360
+
+
+def is_finite_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def tailor_adsb_payload(payload, latitude, longitude, distance):
+    """Return a per-request copy of the upstream payload relative to the exact user position.
+
+    The upstream payload was fetched for a rounded coordinate, so ``dst`` (and ``dir``) are
+    recalculated from the exact coordinate and aircraft outside ``distance`` are dropped.
+    The cached payload is never mutated.
+    """
+    aircraft_list = payload.get("ac", [])
+    was_sorted_by_dst = all(
+        float(a["dst"]) <= float(b["dst"])
+        for a, b in zip(aircraft_list, aircraft_list[1:])
+        if is_finite_number(a.get("dst")) and is_finite_number(b.get("dst"))
     )
-    cached_payload = read_adsb_payload_cache(url)
-    if cached_payload is not None:
-        return cached_payload
-    response = request_adsb(url)
-    response.raise_for_status()
-    payload = response.json()
-    write_adsb_payload_cache(url, payload)
-    return payload
+
+    tailored = []
+    for item in aircraft_list:
+        aircraft = dict(item)
+        item_lat, item_lon = aircraft.get("lat"), aircraft.get("lon")
+        if is_finite_number(item_lat) and is_finite_number(item_lon):
+            dst = haversine_nm(latitude, longitude, item_lat, item_lon)
+            if dst > distance:
+                continue
+            aircraft["dst"] = round(dst, 3)
+            if "dir" in aircraft:
+                aircraft["dir"] = round(initial_bearing_deg(latitude, longitude, item_lat, item_lon), 1)
+        tailored.append(aircraft)
+
+    if was_sorted_by_dst:
+        tailored.sort(key=lambda a: float(a["dst"]) if is_finite_number(a.get("dst")) else float("inf"))
+
+    result = dict(payload)
+    result["ac"] = tailored
+    if "total" in payload:
+        result["total"] = len(tailored)
+    return result
+
+
+def fetch_adsb_payload(latitude, longitude, distance):
+    """Return the adsb.fi payload for this request, reusing a short-lived upstream copy.
+
+    Upstream queries use coordinates rounded to ADSB_COORDINATE_PRECISION and a radius widened by
+    ADSB_QUERY_MARGIN_NM (capped at MAX_DISTANCE_NM), so nearby users share one cache entry.
+    """
+    query_latitude = round(latitude, ADSB_COORDINATE_PRECISION)
+    query_longitude = round(longitude, ADSB_COORDINATE_PRECISION)
+    query_distance = min(distance + ADSB_QUERY_MARGIN_NM, MAX_DISTANCE_NM)
+    url = API_BASE_URL.format(
+        lat=f"{query_latitude:.{ADSB_COORDINATE_PRECISION}f}",
+        lon=f"{query_longitude:.{ADSB_COORDINATE_PRECISION}f}",
+        distance=f"{query_distance:g}",
+    )
+    payload = read_adsb_payload_cache(url)
+    if payload is None:
+        response = request_adsb(url)
+        response.raise_for_status()
+        payload = response.json()
+        write_adsb_payload_cache(url, payload)
+    return tailor_adsb_payload(payload, latitude, longitude, distance)
 
 
 def register_presence(client_id):
@@ -531,7 +655,7 @@ def parse_location_args(source):
         raise ValueError("Latitude must be between -90 and 90.")
     if not -180 <= longitude <= 180:
         raise ValueError("Longitude must be between -180 and 180.")
-    if not 0 < distance <= 250:
+    if not 0 < distance <= MAX_DISTANCE_NM:
         raise ValueError("Distance must be greater than 0 and no more than 250 NM.")
 
     return latitude, longitude, distance

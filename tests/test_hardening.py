@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 cache_directory = tempfile.mkdtemp(prefix="planeradar-tests-")
 os.environ["PLANE_RADAR_CACHE_DB"] = os.path.join(cache_directory, "cache.sqlite3")
 import requests
+from flask import Flask, request
 from app import app
 import app as app_module
 
@@ -139,6 +140,97 @@ class HardeningTests(unittest.TestCase):
 
             self.assertEqual(count, 1)
             self.assertIn("new-client-0000000002", app_module.active_presence)
+
+
+class SecurityHeaderTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.client = app.test_client()
+
+    def test_html_pages_have_global_security_headers_and_csp(self):
+        for path in ("/", "/mobile"):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+                self.assertEqual(response.headers["Referrer-Policy"], "strict-origin-when-cross-origin")
+                self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+                self.assertEqual(
+                    response.headers["Permissions-Policy"],
+                    "geolocation=(self), camera=(), microphone=()",
+                )
+                csp = response.headers["Content-Security-Policy"]
+                self.assertIn("frame-ancestors 'none'", csp)
+                self.assertIn("base-uri 'self'", csp)
+                self.assertIn("object-src 'none'", csp)
+                self.assertIn("script-src 'self'", csp)
+                self.assertNotIn("script-src 'self' 'unsafe-inline'", csp)
+
+    def test_html_pages_have_no_inline_scripts(self):
+        for path in ("/", "/mobile"):
+            with self.subTest(path=path):
+                html = self.client.get(path).get_data(as_text=True)
+
+                self.assertNotIn("<script>", html)
+                self.assertIn('id="plane-radar-defaults"', html)
+
+    def test_non_html_responses_get_common_headers_without_html_csp(self):
+        response = self.client.get("/healthz")
+
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+        self.assertNotIn("Content-Security-Policy", response.headers)
+
+    @patch("app.get_silhouette")
+    def test_svg_csp_is_preserved(self, get_silhouette):
+        get_silhouette.return_value = b'<svg xmlns="http://www.w3.org/2000/svg"/>'
+
+        response = self.client.get("/api/silhouette/A320")
+
+        self.assertEqual(
+            response.headers["Content-Security-Policy"],
+            app_module.SVG_CONTENT_SECURITY_POLICY,
+        )
+        self.assertNotIn("frame-ancestors", response.headers["Content-Security-Policy"])
+
+
+class TrustedProxiesTests(unittest.TestCase):
+    def build_client(self, trusted_proxies):
+        mini_app = Flask("trusted_proxies_test")
+
+        @mini_app.get("/")
+        def root():
+            return request.url_root
+
+        app_module.apply_proxy_fix(mini_app, trusted_proxies)
+        return mini_app.test_client()
+
+    forwarded_headers = {"X-Forwarded-Host": "evil.example", "X-Forwarded-Proto": "https"}
+
+    def test_zero_ignores_forwarded_host(self):
+        response = self.build_client(0).get("/", headers=self.forwarded_headers)
+
+        self.assertNotIn("evil.example", response.get_data(as_text=True))
+
+    def test_one_trusts_forwarded_host(self):
+        response = self.build_client(1).get("/", headers=self.forwarded_headers)
+
+        self.assertEqual(response.get_data(as_text=True), "https://evil.example/")
+
+    def test_invalid_value_falls_back_to_one_with_warning(self):
+        for raw_value in ("abc", "-1", "1.5"):
+            with self.subTest(value=raw_value):
+                with patch.dict(os.environ, {"PLANE_RADAR_TRUSTED_PROXIES": raw_value}):
+                    with patch.object(app_module.app.logger, "warning") as warning:
+                        value = app_module.read_trusted_proxies()
+
+                self.assertEqual(value, 1)
+                warning.assert_called_once()
+
+    def test_zero_is_read_from_environment(self):
+        with patch.dict(os.environ, {"PLANE_RADAR_TRUSTED_PROXIES": "0"}):
+            self.assertEqual(app_module.read_trusted_proxies(), 0)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ services:
       PLANE_RADAR_DISTANCE: "${PLANE_RADAR_DISTANCE:-25}"
       PLANE_RADAR_POLLING: "${PLANE_RADAR_POLLING:-10}"
       PLANE_RADAR_AIRLINE_LOGO_API_KEY: "${PLANE_RADAR_AIRLINE_LOGO_API_KEY:-}"
+      PLANE_RADAR_TRUSTED_PROXIES: "${PLANE_RADAR_TRUSTED_PROXIES:-1}"
       PLANE_RADAR_CACHE_DB: "/data/planeradar-cache.sqlite3"
     volumes:
       # Pasta do host precisa ser de propriedade 1030:65536 (ver docs/deploy-synology.md).

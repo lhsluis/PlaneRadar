@@ -1,3 +1,4 @@
+window.PLANE_RADAR_DEFAULTS = JSON.parse(document.getElementById("plane-radar-defaults").textContent);
 const MOBILE_POLL_INTERVAL = Number(window.PLANE_RADAR_DEFAULTS.polling) || 10;
 const SILHOUETTE_BASE_URL = "/api/silhouette/";
 const GENERIC_SILHOUETTE_URL = "/static/paperplane.svg";
@@ -50,9 +51,10 @@ function escapeHtml(value) {
 function safeImageUrl(url) {
   return /^(\/(?!\/)|https?:\/\/)/.test(String(url || "")) ? url : "";
 }
-function renderActiveUsers(count = "—") {
+function renderActiveUsers(count = 0) {
   const element = $m("#active-users-label");
-  if (element) element.innerHTML = tm("activeUsers").replace("{count}", count);
+  const value = Number.parseInt(count, 10);
+  if (element) element.innerHTML = tm("activeUsers").replace("{count}", number(Number.isFinite(value) ? value : 0));
 }
 function getPresenceClientId() {
   const key = "plane-radar-presence-id";
@@ -66,7 +68,7 @@ function getPresenceClientId() {
 async function updatePresence() {
   try {
     const response = await fetch("/api/presence", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({client_id:getPresenceClientId()})});
-    if (response.ok) renderActiveUsers(number((await response.json()).active_users));
+    if (response.ok) renderActiveUsers((await response.json()).active_users);
   } catch (error) { console.warn("Unable to update active user count:", error); }
 }
 function showMobileMessage(message) {
@@ -78,9 +80,15 @@ function showMobileMessage(message) {
 }
 function markSilhouetteUnavailable(typeCode, image) {
   unavailableSilhouettes.add(typeCode);
-  image.onerror = null;
+  delete image.dataset.typeCode;
   image.src = GENERIC_SILHOUETTE_URL;
 }
+document.addEventListener("error", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLImageElement) || !target.matches("img.mobile-flight-silhouette")) return;
+  if (!target.dataset.typeCode || target.getAttribute("src") === GENERIC_SILHOUETTE_URL) return;
+  markSilhouetteUnavailable(target.dataset.typeCode, target);
+}, true);
 
 function renderMobileLocation() {
   const label = $m("#mobile-location-label");
@@ -115,13 +123,13 @@ function formatMobileFlight(plane) {
 }
 function mobileSilhouette(plane) {
   const typeCode = String(plane.t || "").trim().toUpperCase();
-  if (!typeCode) return "";
+  if (!/^[A-Z0-9]{1,10}$/.test(typeCode)) return "";
   const source = unavailableSilhouettes.has(typeCode)
     ? GENERIC_SILHOUETTE_URL
     : `${SILHOUETTE_BASE_URL}${encodeURIComponent(typeCode)}`;
   const safeSource = safeImageUrl(source);
   if (!safeSource) return "";
-  return `<img class="mobile-flight-silhouette" src="${escapeHtml(safeSource)}" alt="" loading="lazy" onerror="markSilhouetteUnavailable(${escapeHtml(JSON.stringify(typeCode))}, this)">`;
+  return `<img class="mobile-flight-silhouette" src="${escapeHtml(safeSource)}" data-type-code="${escapeHtml(typeCode)}" alt="" loading="lazy">`;
 }
 function mobileFlightIata(plane) {
   const iata = String(flightInfo(plane)?.callsign_iata || "").trim();

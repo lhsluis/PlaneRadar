@@ -107,6 +107,19 @@ services:
 
 Para alterar a localização, o polling e, opcionalmente, a chave de logos do container, use as variáveis `PLANE_RADAR_LAT`, `PLANE_RADAR_LON`, `PLANE_RADAR_DISTANCE`, `PLANE_RADAR_POLLING` e `PLANE_RADAR_AIRLINE_LOGO_API_KEY`. O polling deve ser inteiro e ter pelo menos 3 segundos. A variável de chave fica vazia por padrão; em produção, forneça-a por variável de ambiente ou secret, sem gravá-la no repositório. Para documentação ou testes locais, use uma chave fictícia como `DUMMY-AIRLINE-LOGO-API-KEY`.
 
+Variáveis de ambiente do servidor:
+
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `PLANE_RADAR_LAT`, `PLANE_RADAR_LON` | `-21.805684`, `-48.139653` | Localização padrão. |
+| `PLANE_RADAR_DISTANCE` | `25` | Raio padrão em NM (até 250). |
+| `PLANE_RADAR_POLLING` | `10` | Intervalo de consulta em segundos (inteiro, mínimo 3). |
+| `PLANE_RADAR_AIRLINE_LOGO_API_KEY` | vazia | Chave da API de logos (opcional). |
+| `PLANE_RADAR_CACHE_DB` | `data/planeradar-cache.sqlite3` | Caminho do banco SQLite de cache. |
+| `PLANE_RADAR_TRUSTED_PROXIES` | `1` | Quantidade de reverse proxies confiáveis à frente do app. Com `1`, os cabeçalhos `X-Forwarded-Proto` e `X-Forwarded-Host` são aceitos (comportamento do deploy Synology). Use `0` para acesso direto sem proxy, ignorando esses cabeçalhos. Valor inválido (não inteiro ou negativo) usa `1` e registra um aviso. |
+
+Cabeçalhos de segurança: todas as respostas incluem `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY` e `Permissions-Policy: geolocation=(self), camera=(), microphone=()`. As páginas HTML recebem uma `Content-Security-Policy` restritiva (scripts apenas de `'self'`, sem scripts inline; estilos de `'self'`, inline e Google Fonts). As respostas SVG de silhuetas mantêm a própria CSP.
+
 Para acompanhar os logs:
 
 ```powershell
@@ -164,7 +177,7 @@ GET /api/location?lat={lat}&lon={lon}&localityLanguage={pt|en}
 POST /api/presence
 ```
 
-- `/api/aircraft` consulta o endpoint v3 do adsb.fi. O backend reserva os slots das consultas com intervalo mínimo de 2 segundos, evitando colisões quando várias sessões estão abertas ao mesmo tempo. A resposta do adsb.fi também fica em cache em memória por 2 segundos para consultas idênticas (mesma latitude, longitude e distância), de modo que sessões na mesma área compartilhem a mesma consulta.
+- `/api/aircraft` consulta o endpoint v3 do adsb.fi. O backend reserva os slots das consultas com intervalo mínimo de 2 segundos, evitando colisões quando várias sessões estão abertas ao mesmo tempo. A resposta do adsb.fi também fica em cache em memória por 2 segundos. A consulta upstream usa latitude e longitude arredondadas a 3 casas decimais e um raio ampliado em 0,05 NM (limitado a 250 NM), de modo que sessões próximas compartilhem a mesma consulta. Antes de responder, o backend recalcula `dst` (e `dir`, quando existir) a partir da coordenada exata de cada requisição, remove aeronaves além da distância pedida e trabalha sobre uma cópia, sem alterar o payload em cache. O formato da resposta não muda.
 - `/api/nearest-aircraft` retorna a aeronave mais próxima, todos os dados ADS-B exibidos nas tabelas, o enriquecimento de companhia/rota em `flight_info`, os links da silhueta em `silhouette` e do logo da companhia em `airline_logo`, além de `location` com cidade, subdivisão principal e país. `silhouette` é `null` quando o tipo da aeronave não possui arquivo correspondente. O logo é buscado na Logostream somente quando não está no cache SQLite e servido pelo endpoint interno `/api/airline-logo/{icao}`.
 - `/api/nearest-aircraft` também retorna `silhouette_png` e `airline_logo_small`, URLs HTTPS/HTTP completas para as variantes PNG de 64 pixels. Essas URLs respeitam `X-Forwarded-Proto` e `X-Forwarded-Host` quando a aplicação está atrás de um proxy reverso.
 - Para a companhia com ICAO `TRA`, o PlaneRadar consulta o Logostream usando `TVF`, grava o logo no cache usando `TVF` e serve os links internos usando o ICAO `TVF`.
@@ -192,7 +205,7 @@ O `file` deve indicar PNG RGBA 8-bit não entrelaçado, com o lado maior de até
 
 ## Uso das APIs externas
 
-O endpoint público do adsb.fi possui limite de uma requisição por segundo e é destinado a uso pessoal e não comercial. Além do intervalo configurado no navegador, o servidor aplica um intervalo mínimo global de 2 segundos entre o início das consultas ao adsb.fi. Respostas idênticas do adsb.fi também ficam em cache em memória por 2 segundos, compartilhadas entre sessões na mesma área. A configuração de produção usa um worker Gunicorn para que esse limitador seja compartilhado por todas as threads; ao escalar para múltiplos workers ou réplicas, use um limitador compartilhado externo, como Redis. Consulte os [termos do adsb.fi](https://github.com/adsbfi/opendata/blob/main/README.md), os [termos do ADSBdb](https://www.adsbdb.com/) e as condições dos demais fornecedores antes de publicar ou distribuir a aplicação.
+O endpoint público do adsb.fi possui limite de uma requisição por segundo e é destinado a uso pessoal e não comercial. Além do intervalo configurado no navegador, o servidor aplica um intervalo mínimo global de 2 segundos entre o início das consultas ao adsb.fi. Consultas do adsb.fi também ficam em cache em memória por 2 segundos, com coordenadas arredondadas a 3 casas decimais, compartilhadas entre sessões na mesma área. A configuração de produção usa um worker Gunicorn para que esse limitador seja compartilhado por todas as threads; ao escalar para múltiplos workers ou réplicas, use um limitador compartilhado externo, como Redis. Consulte os [termos do adsb.fi](https://github.com/adsbfi/opendata/blob/main/README.md), os [termos do ADSBdb](https://www.adsbdb.com/) e as condições dos demais fornecedores antes de publicar ou distribuir a aplicação.
 
 ## Estrutura
 
